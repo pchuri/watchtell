@@ -233,7 +233,7 @@ function cmdDaemon(action, options) {
       }
       if (result.unsupported) return fail(result.message);
       if (!result.ok) {
-        const recovery = st.running
+        const recovery = st.running && !result.loaded
           ? " Run 'watchtell daemon start' to resume without auto-start."
           : '';
         return fail(`${result.message}.${recovery}`);

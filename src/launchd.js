@@ -129,6 +129,13 @@ function launchctlFailure(action, result) {
   return `launchctl ${action} failed: ${detail}`;
 }
 
+function unloadService(launchctlFn) {
+  const result = launchctlFn(['bootout', serviceTarget()]);
+  if (result.status === 0) return { unloaded: true, result };
+  const state = launchctlFn(['print', serviceTarget()]);
+  return { unloaded: state.status !== 0, result, state };
+}
+
 // Write the plist and load it via launchctl. opts.plistPath / opts.launchctlFn
 // exist only so tests can isolate the filesystem and avoid touching launchctl.
 function install(opts = {}) {
@@ -145,21 +152,37 @@ function install(opts = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, xml, { mode: 0o644 });
 
-  // Reload cleanly: bootout any prior instance (ignore failure), then bootstrap.
-  launchctlFn(['bootout', domainTarget(), file]);
+  const initialBootout = launchctlFn(['bootout', domainTarget(), file]);
   const res = launchctlFn(['bootstrap', domainTarget(), file]);
   const loaded = res.status === 0;
-  if (!loaded) fs.rmSync(file, { force: true });
+  if (!loaded) {
+    const rollback = unloadService(launchctlFn);
+    if (rollback.unloaded) fs.rmSync(file, { force: true });
+    return {
+      ok: false,
+      unsupported: false,
+      plistPath: file,
+      spec,
+      initialBootout,
+      launchctl: res,
+      loaded: !rollback.unloaded,
+      rolledBack: rollback.unloaded,
+      rollback,
+      message: rollback.unloaded
+        ? `${launchctlFailure('bootstrap', res)}; LaunchAgent was not installed`
+        : `${launchctlFailure('bootstrap', res)}; service is still loaded and the plist was retained. Run 'watchtell daemon uninstall' or 'launchctl bootout ${serviceTarget()}' to remove it`,
+    };
+  }
   return {
-    ok: loaded,
+    ok: true,
     unsupported: false,
     plistPath: file,
     spec,
+    initialBootout,
     launchctl: res,
-    loaded,
-    message: loaded
-      ? null
-      : `${launchctlFailure('bootstrap', res)}; LaunchAgent was not installed`,
+    loaded: true,
+    rolledBack: false,
+    message: null,
   };
 }
 
@@ -172,20 +195,17 @@ function uninstall(opts = {}) {
   const file = opts.plistPath || plistPath();
   const launchctlFn = opts.launchctlFn || realLaunchctl;
   const existed = fs.existsSync(file);
-  const unload = launchctlFn(['bootout', serviceTarget()]);
-  if (unload.status !== 0) {
-    const state = launchctlFn(['print', serviceTarget()]);
-    if (state.status === 0) {
-      return {
-        ok: false,
-        unsupported: false,
-        plistPath: file,
-        existed,
-        launchctl: unload,
-        loaded: true,
-        message: launchctlFailure('bootout', unload),
-      };
-    }
+  const unload = unloadService(launchctlFn);
+  if (!unload.unloaded) {
+    return {
+      ok: false,
+      unsupported: false,
+      plistPath: file,
+      existed,
+      launchctl: unload.result,
+      loaded: true,
+      message: launchctlFailure('bootout', unload.result),
+    };
   }
   fs.rmSync(file, { force: true });
   return {
@@ -193,7 +213,7 @@ function uninstall(opts = {}) {
     unsupported: false,
     plistPath: file,
     existed,
-    launchctl: unload,
+    launchctl: unload.result,
     loaded: false,
   };
 }

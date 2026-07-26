@@ -136,17 +136,58 @@ test('install reports bootstrap failure', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchtell-launchd-'));
   const file = path.join(dir, 'com.watchtell.daemon.plist');
   const savedHome = process.env.WATCHTELL_HOME;
-  const spy = (args) =>
-    args[0] === 'bootstrap'
+  const calls = [];
+  const spy = (args) => {
+    calls.push(args);
+    return args[0] === 'bootstrap'
       ? { status: 5, stdout: '', stderr: 'bootstrap denied' }
       : { status: 0, stdout: '', stderr: '' };
+  };
   try {
     process.env.WATCHTELL_HOME = path.join(dir, 'runtime');
     const result = launchd.install({ platform: 'darwin', plistPath: file, launchctlFn: spy });
     assert.strictEqual(result.ok, false);
     assert.strictEqual(result.loaded, false);
+    assert.strictEqual(result.rolledBack, true);
     assert.match(result.message, /launchctl bootstrap failed: bootstrap denied/);
     assert.strictEqual(fs.existsSync(file), false);
+    assert.deepStrictEqual(calls.map((args) => args[0]), ['bootout', 'bootstrap', 'bootout']);
+  } finally {
+    if (savedHome === undefined) delete process.env.WATCHTELL_HOME;
+    else process.env.WATCHTELL_HOME = savedHome;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('install retains the plist when rollback cannot unload the service', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchtell-launchd-'));
+  const file = path.join(dir, 'com.watchtell.daemon.plist');
+  const savedHome = process.env.WATCHTELL_HOME;
+  const calls = [];
+  const spy = (args) => {
+    calls.push(args);
+    if (args[0] === 'bootstrap') {
+      return { status: 5, stdout: '', stderr: 'service already loaded' };
+    }
+    if (args[0] === 'print') return { status: 0, stdout: 'loaded', stderr: '' };
+    return { status: 5, stdout: '', stderr: 'operation not permitted' };
+  };
+  try {
+    process.env.WATCHTELL_HOME = path.join(dir, 'runtime');
+    const result = launchd.install({ platform: 'darwin', plistPath: file, launchctlFn: spy });
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.loaded, true);
+    assert.strictEqual(result.rolledBack, false);
+    assert.strictEqual(fs.existsSync(file), true);
+    assert.match(result.message, /service is still loaded and the plist was retained/);
+    assert.match(result.message, /watchtell daemon uninstall/);
+    assert.match(result.message, /launchctl bootout/);
+    assert.deepStrictEqual(calls.map((args) => args[0]), [
+      'bootout',
+      'bootstrap',
+      'bootout',
+      'print',
+    ]);
   } finally {
     if (savedHome === undefined) delete process.env.WATCHTELL_HOME;
     else process.env.WATCHTELL_HOME = savedHome;
