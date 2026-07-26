@@ -51,23 +51,25 @@ changes later" request, get consent, compose a high-quality alarm request, run `
 generated checker, and confirm the daemon is polling. The frontmatter is tool-neutral (`name` +
 `description` only) so the same file works for both tools.
 
-Install it at the **user level** (the daemon is user-global, so the skill should be too). Run from inside
-your clone:
+Install it at the **user level** (the daemon is user-global, so the skill should be too). Once
+`watchtell` is on your `PATH`, you can run this from any directory:
 
 ```sh
 watchtell skill install              # symlink into ~/.claude/skills and ~/.codex/skills (both agents)
 watchtell skill install --claude     # or limit to one agent (--claude / --codex)
 watchtell skill status               # show each target: installed -> where it points, or not installed
 watchtell skill uninstall            # remove only symlinks that point at this clone (idempotent)
+watchtell skill uninstall --force    # remove any symlink at the selected watchtell target
 ```
 
-`skill install` symlinks the skill dir inside **this clone** into each agent's user-level `skills/`
-directory, creating `~/.claude/skills/` / `~/.codex/skills/` as needed. It never overwrites a real
-file/dir or a foreign symlink already at the target — it reports that target as SKIPPED and tells you how
-to replace it manually. Because it's a symlink into the clone, a `git pull` keeps the installed skill
-current — no re-install needed.
+`skill install` resolves the skill dir inside **this clone** from `watchtell`'s installed location,
+not the current directory, then symlinks it into each agent's user-level `skills/` directory. It creates
+`~/.claude/skills/` / `~/.codex/skills/` as needed. It never overwrites a real file/dir or a foreign
+symlink already at the target — it reports that target as SKIPPED and tells you how to replace it
+manually. `skill uninstall` also never removes a real file/dir, including with `--force`. Because the
+installed skill is a symlink into the clone, a `git pull` keeps it current — no re-install needed.
 
-Manual fallback (what `skill install` prints, if you prefer to do it by hand):
+Manual fallback (equivalent to the commands `skill install` prints): run these from inside your clone.
 
 ```sh
 mkdir -p ~/.claude/skills ~/.codex/skills
