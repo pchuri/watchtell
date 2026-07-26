@@ -10,6 +10,7 @@ const store = require('./store');
 const trust = require('./trust');
 const run = require('./run');
 const daemon = require('./daemon');
+const launchd = require('./launchd');
 
 function nowIso() {
   return new Date().toISOString();
@@ -210,8 +211,57 @@ function cmdDaemon(action, options) {
       if (st.stale) return process.stdout.write(`not running (stale pid file: ${st.pid})\n`);
       return process.stdout.write('not running\n');
     }
+    case 'install': {
+      if (!launchd.isSupportedPlatform()) return fail(launchd.UNSUPPORTED_MESSAGE);
+      // launchd must own the single instance: stop any plain detached daemon first,
+      // otherwise two daemons would poll at once.
+      const st = daemon.status();
+      if (st.running) {
+        const r = daemon.stop();
+        if (!r.stopped) return fail(`daemon did not stop (pid ${r.pid}); LaunchAgent not installed`);
+        process.stdout.write(
+          `Stopped the running detached daemon (pid ${r.pid}) so launchd owns the single instance.\n`
+        );
+      } else if (st.stale) {
+        daemon.stop(); // clears the stale pid file
+      }
+      let result;
+      try {
+        result = launchd.install();
+      } catch (e) {
+        return fail(e.message);
+      }
+      if (result.unsupported) return fail(result.message);
+      if (!result.ok) {
+        const recovery = st.running && !result.loaded
+          ? " Run 'watchtell daemon start' to resume without auto-start."
+          : '';
+        return fail(`${result.message}.${recovery}`);
+      }
+      process.stdout.write(`Installed LaunchAgent: ${result.plistPath}\n`);
+      process.stdout.write(
+        `Label ${launchd.LABEL} — auto-starts on login/reboot and restarts on crash.\n`
+      );
+      process.stdout.write(`Uninstall with: watchtell daemon uninstall\n`);
+      return;
+    }
+    case 'uninstall': {
+      if (!launchd.isSupportedPlatform()) return fail(launchd.UNSUPPORTED_MESSAGE);
+      let result;
+      try {
+        result = launchd.uninstall();
+      } catch (e) {
+        return fail(e.message);
+      }
+      if (result.unsupported) return fail(result.message);
+      if (!result.ok) return fail(result.message);
+      if (result.existed) {
+        return process.stdout.write(`Uninstalled LaunchAgent: ${result.plistPath}\n`);
+      }
+      return process.stdout.write('No LaunchAgent installed (nothing to remove).\n');
+    }
     default:
-      return fail(`unknown daemon action '${action}' (use start|stop|status)`);
+      return fail(`unknown daemon action '${action}' (use start|stop|status|install|uninstall)`);
   }
 }
 
@@ -250,10 +300,10 @@ function buildProgram() {
 
   program
     .command('daemon')
-    .argument('<action>', 'start | stop | status')
+    .argument('<action>', 'start | stop | status | install | uninstall')
     .option('--detach', 'run the scheduler in the background')
     .option('--foreground', 'run in the foreground (internal; default for start)')
-    .description('control the internal-loop scheduler')
+    .description('control the internal-loop scheduler (install/uninstall manage launchd auto-start)')
     .action(cmdDaemon);
 
   return program;
