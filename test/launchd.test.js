@@ -135,16 +135,21 @@ test('install writes the plist and bootstraps it; uninstall removes it (isolated
 test('install reports bootstrap failure', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchtell-launchd-'));
   const file = path.join(dir, 'com.watchtell.daemon.plist');
+  const savedHome = process.env.WATCHTELL_HOME;
   const spy = (args) =>
     args[0] === 'bootstrap'
       ? { status: 5, stdout: '', stderr: 'bootstrap denied' }
       : { status: 0, stdout: '', stderr: '' };
   try {
+    process.env.WATCHTELL_HOME = path.join(dir, 'runtime');
     const result = launchd.install({ platform: 'darwin', plistPath: file, launchctlFn: spy });
     assert.strictEqual(result.ok, false);
     assert.strictEqual(result.loaded, false);
     assert.match(result.message, /launchctl bootstrap failed: bootstrap denied/);
+    assert.strictEqual(fs.existsSync(file), false);
   } finally {
+    if (savedHome === undefined) delete process.env.WATCHTELL_HOME;
+    else process.env.WATCHTELL_HOME = savedHome;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -202,6 +207,21 @@ test('resolveInstallSpec picks up the WATCHTELL_HOME override and absolute paths
     else process.env.WATCHTELL_HOME = saved;
     if (savedPath === undefined) delete process.env.PATH;
     else process.env.PATH = savedPath;
+  }
+});
+
+test('resolveInstallSpec makes a relative WATCHTELL_HOME absolute', () => {
+  const saved = process.env.WATCHTELL_HOME;
+  try {
+    process.env.WATCHTELL_HOME = 'relative-watchtell-home';
+    const expectedHome = path.resolve('relative-watchtell-home');
+    const spec = launchd.resolveInstallSpec();
+    assert.strictEqual(spec.watchtellHome, expectedHome);
+    assert.strictEqual(spec.homePath, expectedHome);
+    assert.strictEqual(spec.logPath, path.join(expectedHome, 'daemon.log'));
+  } finally {
+    if (saved === undefined) delete process.env.WATCHTELL_HOME;
+    else process.env.WATCHTELL_HOME = saved;
   }
 });
 

@@ -93,12 +93,16 @@ function buildPlist({ nodePath, scriptPath, logPath, watchtellHome, environmentP
 // Resolve the install-time spec: absolute node + script paths, the log path, and
 // the WATCHTELL_HOME override if one is in effect.
 function resolveInstallSpec() {
+  const watchtellHome = process.env.WATCHTELL_HOME
+    ? path.resolve(process.env.WATCHTELL_HOME)
+    : null;
+  const homePath = watchtellHome || paths.home();
   return {
     nodePath: process.execPath,
     scriptPath: path.resolve(__dirname, '..', 'bin', 'watchtell.js'),
-    logPath: paths.logPath(),
-    homePath: paths.home(),
-    watchtellHome: process.env.WATCHTELL_HOME || null,
+    logPath: path.join(homePath, 'daemon.log'),
+    homePath,
+    watchtellHome,
     environmentPath: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
   };
 }
@@ -145,6 +149,7 @@ function install(opts = {}) {
   launchctlFn(['bootout', domainTarget(), file]);
   const res = launchctlFn(['bootstrap', domainTarget(), file]);
   const loaded = res.status === 0;
+  if (!loaded) fs.rmSync(file, { force: true });
   return {
     ok: loaded,
     unsupported: false,
@@ -152,7 +157,9 @@ function install(opts = {}) {
     spec,
     launchctl: res,
     loaded,
-    message: loaded ? null : launchctlFailure('bootstrap', res),
+    message: loaded
+      ? null
+      : `${launchctlFailure('bootstrap', res)}; LaunchAgent was not installed`,
   };
 }
 

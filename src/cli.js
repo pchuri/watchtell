@@ -232,7 +232,12 @@ function cmdDaemon(action, options) {
         return fail(e.message);
       }
       if (result.unsupported) return fail(result.message);
-      if (!result.ok) return fail(result.message);
+      if (!result.ok) {
+        const recovery = st.running
+          ? " Run 'watchtell daemon start' to resume without auto-start."
+          : '';
+        return fail(`${result.message}.${recovery}`);
+      }
       process.stdout.write(`Installed LaunchAgent: ${result.plistPath}\n`);
       process.stdout.write(
         `Label ${launchd.LABEL} — auto-starts on login/reboot and restarts on crash.\n`

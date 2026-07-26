@@ -50,6 +50,7 @@ On macOS, `watchtell daemon install` registers a **LaunchAgent** so the polling 
 - The plist hard-codes the absolute `node` binary and `bin/watchtell.js` path resolved at install time (it does not rely on `PATH`) and runs `daemon start --foreground` so launchd owns the process lifecycle (`RunAtLoad` + `KeepAlive`). stdout/stderr go to the daemon log.
 - If a non-default `WATCHTELL_HOME` is set at install time, it is preserved in the agent's `EnvironmentVariables` so it keeps pointing at that home after reboot.
 - Install first stops any plain detached daemon so launchd owns a single instance (no double-polling).
+- Once installed, `KeepAlive` restarts the daemon after `watchtell daemon stop`; use `watchtell daemon uninstall` to stop it and disable auto-start.
 
 ```sh
 watchtell daemon install     # register + start via launchd (auto-starts on reboot)
