@@ -71,4 +71,8 @@ npm run smoke     # end-to-end happy path with a fixture compiler + mock notifie
 
 The smoke script uses a fixture compiler and a mock notifier because sandboxes/CI have no GUI session for real Notification Center; the happy path (add → keep+bind → list → test → daemon fire → rm) is otherwise exercised against the real daemon.
 
+## Limitations (v0.1)
+
+A checker that ignores its 30s timeout can force the daemon into a forced stop: if the daemon does not exit within the stop grace period, `watchtell daemon stop` escalates to `SIGKILL`, which can orphan an in-flight checker (it loses the daemon's timeout supervisor but still self-terminates on its own, since checkers are short probes). Fully reaping an in-flight checker on forced stop is deferred to v0.2.
+
 > Work in progress — not yet released. launchd auto-start and Slack routing are planned for v0.2.
