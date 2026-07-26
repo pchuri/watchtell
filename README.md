@@ -64,6 +64,8 @@ A generated checker is arbitrary code, so it never runs before you approve it:
 
 v0.1 has one route: **`notify`** = macOS Notification Center via `osascript` (no extra dependencies). A checker may compile with a different `route=` (e.g. `slack`); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. The Slack webhook plugin is v0.2.
 
+**Clickable notifications (optional).** If [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) is installed (`brew install terminal-notifier`), watchtell delivers through it so clicking a notification opens the first URL found in the alarm message. Without it, watchtell falls back to `osascript` (notifications still show, just aren't clickable) — no new hard dependency.
+
 ## Development
 
 ```sh
