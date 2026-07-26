@@ -218,11 +218,10 @@ function cmdDaemon(action, options) {
       const st = daemon.status();
       if (st.running) {
         const r = daemon.stop();
-        if (r.stopped) {
-          process.stdout.write(
-            `Stopped the running detached daemon (pid ${r.pid}) so launchd owns the single instance.\n`
-          );
-        }
+        if (!r.stopped) return fail(`daemon did not stop (pid ${r.pid}); LaunchAgent not installed`);
+        process.stdout.write(
+          `Stopped the running detached daemon (pid ${r.pid}) so launchd owns the single instance.\n`
+        );
       } else if (st.stale) {
         daemon.stop(); // clears the stale pid file
       }
@@ -233,16 +232,11 @@ function cmdDaemon(action, options) {
         return fail(e.message);
       }
       if (result.unsupported) return fail(result.message);
+      if (!result.ok) return fail(result.message);
       process.stdout.write(`Installed LaunchAgent: ${result.plistPath}\n`);
       process.stdout.write(
         `Label ${launchd.LABEL} — auto-starts on login/reboot and restarts on crash.\n`
       );
-      if (!result.loaded) {
-        const detail = result.launchctl && result.launchctl.stderr ? ` (${result.launchctl.stderr})` : '';
-        process.stdout.write(
-          `Note: launchctl did not confirm the load${detail}; it will still start on next login.\n`
-        );
-      }
       process.stdout.write(`Uninstall with: watchtell daemon uninstall\n`);
       return;
     }
@@ -255,6 +249,7 @@ function cmdDaemon(action, options) {
         return fail(e.message);
       }
       if (result.unsupported) return fail(result.message);
+      if (!result.ok) return fail(result.message);
       if (result.existed) {
         return process.stdout.write(`Uninstalled LaunchAgent: ${result.plistPath}\n`);
       }

@@ -42,22 +42,27 @@ function xmlEscape(value) {
 // absolute node binary and script path resolved at install time so launchd does
 // not depend on PATH. --foreground is required because launchd owns the
 // lifecycle; a detaching start would make launchd think the process exited.
-function buildPlist({ nodePath, scriptPath, logPath, watchtellHome } = {}) {
+function buildPlist({ nodePath, scriptPath, logPath, watchtellHome, environmentPath } = {}) {
   const args = [nodePath, scriptPath, 'daemon', 'start', '--foreground'];
   const argLines = args.map((a) => `    <string>${xmlEscape(a)}</string>`).join('\n');
 
-  // Preserve a non-default home across reboot when WATCHTELL_HOME is set.
-  let envBlock = '';
+  let workingDirectoryBlock = '';
   if (watchtellHome) {
-    envBlock =
+    workingDirectoryBlock =
       `  <key>WorkingDirectory</key>\n` +
-      `  <string>${xmlEscape(watchtellHome)}</string>\n` +
-      `  <key>EnvironmentVariables</key>\n` +
-      `  <dict>\n` +
-      `    <key>WATCHTELL_HOME</key>\n` +
-      `    <string>${xmlEscape(watchtellHome)}</string>\n` +
-      `  </dict>\n`;
+      `  <string>${xmlEscape(watchtellHome)}</string>\n`;
   }
+  const watchtellHomeEntry = watchtellHome
+    ? `    <key>WATCHTELL_HOME</key>\n` +
+      `    <string>${xmlEscape(watchtellHome)}</string>\n`
+    : '';
+  const environmentBlock =
+    `  <key>EnvironmentVariables</key>\n` +
+    `  <dict>\n` +
+    `    <key>PATH</key>\n` +
+    `    <string>${xmlEscape(environmentPath)}</string>\n` +
+    `${watchtellHomeEntry}` +
+    `  </dict>\n`;
 
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
@@ -78,7 +83,8 @@ function buildPlist({ nodePath, scriptPath, logPath, watchtellHome } = {}) {
     `  <string>${xmlEscape(logPath)}</string>\n` +
     `  <key>StandardErrorPath</key>\n` +
     `  <string>${xmlEscape(logPath)}</string>\n` +
-    `${envBlock}` +
+    `${workingDirectoryBlock}` +
+    `${environmentBlock}` +
     `</dict>\n` +
     `</plist>\n`
   );
@@ -91,12 +97,18 @@ function resolveInstallSpec() {
     nodePath: process.execPath,
     scriptPath: path.resolve(__dirname, '..', 'bin', 'watchtell.js'),
     logPath: paths.logPath(),
+    homePath: paths.home(),
     watchtellHome: process.env.WATCHTELL_HOME || null,
+    environmentPath: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
   };
 }
 
 function domainTarget() {
   return `gui/${process.getuid()}`;
+}
+
+function serviceTarget() {
+  return `${domainTarget()}/${LABEL}`;
 }
 
 function realLaunchctl(args) {
@@ -106,6 +118,11 @@ function realLaunchctl(args) {
     stdout: (r.stdout || '').trim(),
     stderr: (r.stderr || '').trim(),
   };
+}
+
+function launchctlFailure(action, result) {
+  const detail = result.stderr || result.stdout || `exit status ${result.status}`;
+  return `launchctl ${action} failed: ${detail}`;
 }
 
 // Write the plist and load it via launchctl. opts.plistPath / opts.launchctlFn
@@ -120,19 +137,22 @@ function install(opts = {}) {
   const spec = resolveInstallSpec();
   const xml = buildPlist(spec);
 
+  fs.mkdirSync(spec.homePath, { recursive: true });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, xml, { mode: 0o644 });
 
   // Reload cleanly: bootout any prior instance (ignore failure), then bootstrap.
   launchctlFn(['bootout', domainTarget(), file]);
   const res = launchctlFn(['bootstrap', domainTarget(), file]);
+  const loaded = res.status === 0;
   return {
-    ok: true,
+    ok: loaded,
     unsupported: false,
     plistPath: file,
     spec,
     launchctl: res,
-    loaded: res.status === 0,
+    loaded,
+    message: loaded ? null : launchctlFailure('bootstrap', res),
   };
 }
 
@@ -145,11 +165,30 @@ function uninstall(opts = {}) {
   const file = opts.plistPath || plistPath();
   const launchctlFn = opts.launchctlFn || realLaunchctl;
   const existed = fs.existsSync(file);
-  if (existed) {
-    launchctlFn(['bootout', domainTarget(), file]);
+  const unload = launchctlFn(['bootout', serviceTarget()]);
+  if (unload.status !== 0) {
+    const state = launchctlFn(['print', serviceTarget()]);
+    if (state.status === 0) {
+      return {
+        ok: false,
+        unsupported: false,
+        plistPath: file,
+        existed,
+        launchctl: unload,
+        loaded: true,
+        message: launchctlFailure('bootout', unload),
+      };
+    }
   }
   fs.rmSync(file, { force: true });
-  return { ok: true, unsupported: false, plistPath: file, existed };
+  return {
+    ok: true,
+    unsupported: false,
+    plistPath: file,
+    existed,
+    launchctl: unload,
+    loaded: false,
+  };
 }
 
 module.exports = {
