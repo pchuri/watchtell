@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const os = require('os');
+const path = require('path');
 const readline = require('readline');
 const { Command } = require('commander');
 
@@ -283,11 +284,16 @@ function skillInstallSummary(results, source) {
   const sourceIsInstalled = results.some(
     (result) => result.status === 'installed' || result.status === 'already-installed'
   );
-  if (!sourceIsInstalled) return '';
-  return (
-    `\nSymlinked from ${source}. A 'git pull' in this clone keeps the skill current.\n` +
-    `Manual fallback: ln -s "${source}" <agent-skills-dir>/watchtell\n`
-  );
+  const lines = [''];
+  if (sourceIsInstalled) {
+    lines.push(`Symlinked from ${source}. A 'git pull' in this clone keeps the skill current.`);
+  }
+  lines.push('Manual fallback:');
+  for (const result of results) {
+    lines.push(`mkdir -p "${path.dirname(result.linkPath)}"`);
+    lines.push(`ln -s "${source}" "${result.linkPath}"`);
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 function cmdSkill(action, options) {
@@ -312,7 +318,7 @@ function cmdSkill(action, options) {
         }
       }
       const summary = skillInstallSummary(results, source);
-      if (summary) process.stdout.write(summary);
+      process.stdout.write(summary);
       return;
     }
     case 'uninstall': {

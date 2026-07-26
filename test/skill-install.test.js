@@ -240,11 +240,27 @@ test('status propagates filesystem errors other than missing paths', () => {
   }
 });
 
-test('install summary is omitted when every target is skipped', () => {
+test('install summary prints executable fallback commands for selected targets', () => {
   const source = '/clone/skills/watchtell';
-  assert.strictEqual(skillInstallSummary([{ status: 'skipped' }], source), '');
-  assert.match(skillInstallSummary([{ status: 'installed' }], source), /Symlinked from/);
-  assert.match(skillInstallSummary([{ status: 'already-installed' }], source), /Symlinked from/);
+  const claude = {
+    status: 'installed',
+    linkPath: '/home/test/.claude/skills/watchtell',
+  };
+  const codex = {
+    status: 'skipped',
+    linkPath: '/home/test/.codex/skills/watchtell',
+  };
+  const both = skillInstallSummary([claude, codex], source);
+  assert.match(both, /Symlinked from/);
+  assert.match(both, /mkdir -p "\/home\/test\/\.claude\/skills"/);
+  assert.match(both, /ln -s "\/clone\/skills\/watchtell" "\/home\/test\/\.claude\/skills\/watchtell"/);
+  assert.match(both, /mkdir -p "\/home\/test\/\.codex\/skills"/);
+  assert.match(both, /ln -s "\/clone\/skills\/watchtell" "\/home\/test\/\.codex\/skills\/watchtell"/);
+
+  const codexOnly = skillInstallSummary([codex], source);
+  assert.doesNotMatch(codexOnly, /Symlinked from/);
+  assert.doesNotMatch(codexOnly, /\.claude/);
+  assert.match(codexOnly, /\.codex/);
 });
 
 test('--claude / --codex limiting selects only the requested agent', () => {
