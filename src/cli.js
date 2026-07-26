@@ -279,6 +279,17 @@ function skillKeys(options) {
   return keys; // empty = all supported agents
 }
 
+function skillInstallSummary(results, source) {
+  const sourceIsInstalled = results.some(
+    (result) => result.status === 'installed' || result.status === 'already-installed'
+  );
+  if (!sourceIsInstalled) return '';
+  return (
+    `\nSymlinked from ${source}. A 'git pull' in this clone keeps the skill current.\n` +
+    `Manual fallback: ln -s "${source}" <agent-skills-dir>/watchtell\n`
+  );
+}
+
 function cmdSkill(action, options) {
   const homeDir = os.homedir();
   const source = skillInstall.skillSourceDir();
@@ -300,10 +311,8 @@ function cmdSkill(action, options) {
             break;
         }
       }
-      process.stdout.write(
-        `\nSymlinked from ${source}. A 'git pull' in this clone keeps the skill current.\n` +
-          `Manual fallback: ln -s "${source}" <agent-skills-dir>/watchtell\n`
-      );
+      const summary = skillInstallSummary(results, source);
+      if (summary) process.stdout.write(summary);
       return;
     }
     case 'uninstall': {
@@ -411,4 +420,14 @@ async function main(argv) {
   await program.parseAsync(argv);
 }
 
-module.exports = { main, buildProgram, cmdAdd, cmdList, cmdTest, cmdRm, cmdDaemon, cmdSkill };
+module.exports = {
+  main,
+  buildProgram,
+  cmdAdd,
+  cmdList,
+  cmdTest,
+  cmdRm,
+  cmdDaemon,
+  cmdSkill,
+  skillInstallSummary,
+};

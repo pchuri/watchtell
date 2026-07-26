@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const skillInstall = require('../src/skill-install');
+const { skillInstallSummary } = require('../src/cli');
 
 function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'watchtell-skill-'));
@@ -79,6 +80,8 @@ test('a real directory at the target is skipped, never overwritten', () => {
     const results = skillInstall.install({ homeDir, source, keys: ['claude'] });
     assert.strictEqual(results[0].status, 'skipped');
     assert.match(results[0].message, /real directory/);
+    assert.match(results[0].message, /backup/i);
+    assert.doesNotMatch(results[0].message, /rm -rf/);
     // Untouched: still a real dir with its file.
     assert.ok(fs.lstatSync(target).isDirectory());
     assert.strictEqual(fs.readFileSync(path.join(target, 'keep.txt'), 'utf8'), 'precious');
@@ -121,6 +124,36 @@ test('uninstall removes only our symlink and is idempotent when absent', () => {
     for (const r of again) {
       assert.strictEqual(r.status, 'absent');
     }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('canonical path identity is shared by install, status, and uninstall', () => {
+  const root = tmpHome();
+  const source = tmpSource(root);
+  const sourceAliasRoot = path.join(root, 'clone-alias');
+  const sourceAlias = path.join(sourceAliasRoot, 'skills', 'watchtell');
+  const homeDir = path.join(root, 'home');
+  const target = path.join(homeDir, '.claude', 'skills', 'watchtell');
+  fs.symlinkSync(path.join(root, 'clone'), sourceAliasRoot);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.symlinkSync(source, target);
+
+  try {
+    const installed = skillInstall.install({ homeDir, source: sourceAlias, keys: ['claude'] });
+    assert.strictEqual(installed[0].status, 'already-installed');
+
+    const currentStatus = skillInstall.status({ homeDir, source: sourceAlias, keys: ['claude'] });
+    assert.strictEqual(currentStatus[0].status, 'installed');
+
+    const uninstalled = skillInstall.uninstall({
+      homeDir,
+      source: sourceAlias,
+      keys: ['claude'],
+    });
+    assert.strictEqual(uninstalled[0].status, 'removed');
+    assert.ok(!fs.existsSync(target));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -189,6 +222,29 @@ test('status reports installed, foreign, real path, and not-installed accurately
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('status propagates filesystem errors other than missing paths', () => {
+  const root = tmpHome();
+  const source = tmpSource(root);
+  const homeDir = path.join(root, 'home');
+  fs.mkdirSync(homeDir, { recursive: true });
+  fs.writeFileSync(path.join(homeDir, '.claude'), 'not a directory');
+  try {
+    assert.throws(
+      () => skillInstall.status({ homeDir, source, keys: ['claude'] }),
+      (error) => error.code === 'ENOTDIR'
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('install summary is omitted when every target is skipped', () => {
+  const source = '/clone/skills/watchtell';
+  assert.strictEqual(skillInstallSummary([{ status: 'skipped' }], source), '');
+  assert.match(skillInstallSummary([{ status: 'installed' }], source), /Symlinked from/);
+  assert.match(skillInstallSummary([{ status: 'already-installed' }], source), /Symlinked from/);
 });
 
 test('--claude / --codex limiting selects only the requested agent', () => {

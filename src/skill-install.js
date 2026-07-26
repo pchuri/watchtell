@@ -42,8 +42,9 @@ function symlinkTarget(linkPath) {
   let dest;
   try {
     dest = fs.readlinkSync(linkPath);
-  } catch {
-    return null;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
   }
   return path.resolve(path.dirname(linkPath), dest);
 }
@@ -51,8 +52,19 @@ function symlinkTarget(linkPath) {
 function lstat(p) {
   try {
     return fs.lstatSync(p);
-  } catch {
-    return null;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+function pathsReferToSameLocation(left, right) {
+  if (!left || !right) return false;
+  try {
+    return fs.realpathSync(left) === fs.realpathSync(right);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
   }
 }
 
@@ -65,7 +77,7 @@ function installTarget(target, source) {
   const st = lstat(linkPath);
   if (st && st.isSymbolicLink()) {
     const points = symlinkTarget(linkPath);
-    if (points === source) {
+    if (pathsReferToSameLocation(points, source)) {
       return { ...target, status: 'already-installed', points };
     }
     return {
@@ -84,7 +96,7 @@ function installTarget(target, source) {
       status: 'skipped',
       message:
         `a real ${kind} already exists here. ` +
-        `Move or remove it first, then re-run: rm -rf "${linkPath}"`,
+        `Move it to a backup location first, then re-run`,
     };
   }
 
@@ -108,7 +120,7 @@ function uninstallTarget(target, source, { force = false } = {}) {
     };
   }
   const points = symlinkTarget(linkPath);
-  if (!force && points !== source) {
+  if (!force && !pathsReferToSameLocation(points, source)) {
     return {
       ...target,
       status: 'skipped',
@@ -132,7 +144,7 @@ function statusTarget(target, source) {
     const points = symlinkTarget(linkPath);
     return {
       ...target,
-      status: points === source ? 'installed' : 'installed-other',
+      status: pathsReferToSameLocation(points, source) ? 'installed' : 'installed-other',
       points,
     };
   }
