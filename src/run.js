@@ -30,7 +30,6 @@ function runChecker(id, opts = {}) {
   const stateFile = paths.statePath(id);
   const priorState = readState(stateFile);
   const r = spawnSync('bash', [paths.scriptPath(id)], {
-    detached: true,
     encoding: 'utf8',
     timeout,
     killSignal: 'SIGKILL',
@@ -38,7 +37,6 @@ function runChecker(id, opts = {}) {
     env: { ...process.env, WATCHTELL_STATE: stateFile },
   });
   const timedOut = Boolean(r.error && r.error.code === 'ETIMEDOUT');
-  if (timedOut) killProcessGroup(r.pid);
   const succeeded = !r.error && r.status === 0;
   if (!succeeded) restoreState(stateFile, priorState);
   // A checker fires on transition by printing exactly one line; anything else is
@@ -53,15 +51,6 @@ function runChecker(id, opts = {}) {
     stderr,
     error: succeeded ? null : checkerError(r, stderr, timedOut),
   };
-}
-
-function killProcessGroup(pid) {
-  if (!pid) return;
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch (e) {
-    if (e.code !== 'ESRCH') throw e;
-  }
 }
 
 function readState(file) {

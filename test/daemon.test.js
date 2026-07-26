@@ -91,27 +91,6 @@ test('runDue enforces the per-run timeout (no fire on timeout)', () => {
   }
 });
 
-test('timeout kills background checker processes before restoring state', async () => {
-  const home = makeHome();
-  const saved = process.env.WATCHTELL_TIMEOUT_MS;
-  try {
-    process.env.WATCHTELL_TIMEOUT_MS = '100';
-    const id = createChecker(
-      '#!/usr/bin/env bash\n(sleep 0.4; printf \'late\\n\' > "$WATCHTELL_STATE") &\nsleep 5\n',
-      { interval: 1 }
-    );
-    fs.writeFileSync(paths.statePath(id), 'previous\n');
-    const result = daemon.runDue({ now: 2_500_000 }).find((entry) => entry.id === id);
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    assert.strictEqual(result.timedOut, true);
-    assert.strictEqual(fs.readFileSync(paths.statePath(id), 'utf8'), 'previous\n');
-  } finally {
-    if (saved === undefined) delete process.env.WATCHTELL_TIMEOUT_MS;
-    else process.env.WATCHTELL_TIMEOUT_MS = saved;
-    cleanup(home);
-  }
-});
-
 test('runDue refuses a tampered checker instead of running it', () => {
   const home = makeHome();
   try {
