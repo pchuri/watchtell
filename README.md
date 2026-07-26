@@ -51,8 +51,6 @@ Every generated checker is deterministic bash that:
 
 Transition dedupe lives inside the checker; the daemon just relays a non-empty line to the notification route.
 
-v0.1 expects checkers to be short, synchronous probes. Although arbitrary checker code is gated by Keep and hash-binding, the 30s timeout terminates only the checker's main process; checkers that background long-lived child processes are out of scope for v0.1.
-
 ## The trust model
 
 A generated checker is arbitrary code, so it never runs before you approve it:

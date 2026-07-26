@@ -91,6 +91,29 @@ test('runDue enforces the per-run timeout (no fire on timeout)', () => {
   }
 });
 
+test('timeout kills foreground checker child processes', async () => {
+  const home = makeHome();
+  const saved = process.env.WATCHTELL_TIMEOUT_MS;
+  let childPid;
+  try {
+    process.env.WATCHTELL_TIMEOUT_MS = '100';
+    const pidFile = path.join(home, 'child.pid');
+    const id = createChecker(
+      `#!/usr/bin/env bash\nbash -c 'printf "%s\\n" "$$" > "${pidFile}"; sleep 5'\n`,
+      { interval: 1 }
+    );
+    const result = daemon.runDue({ now: 2_500_000 }).find((entry) => entry.id === id);
+    childPid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+    assert.strictEqual(result.timedOut, true);
+    assert.strictEqual(await waitForExit(childPid, 500), true);
+  } finally {
+    if (childPid && isProcessAlive(childPid)) process.kill(childPid, 'SIGKILL');
+    if (saved === undefined) delete process.env.WATCHTELL_TIMEOUT_MS;
+    else process.env.WATCHTELL_TIMEOUT_MS = saved;
+    cleanup(home);
+  }
+});
+
 test('runDue refuses a tampered checker instead of running it', () => {
   const home = makeHome();
   try {
@@ -201,3 +224,21 @@ test('a mismatched process identity is never treated as the daemon', () => {
     cleanup(home);
   }
 });
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+async function waitForExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (isProcessAlive(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return !isProcessAlive(pid);
+}
