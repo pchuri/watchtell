@@ -14,7 +14,7 @@ watchtell add "notify me when repo Y publishes a new release"
 
 ## Requirements
 
-- **Node.js >= 20** and **macOS** (notifications use `osascript`).
+- **Node.js >= 20** and **macOS** (notifications use macOS Notification Center).
 - An installed, already-authenticated agent CLI on your `PATH`: **`claude`** (preferred) or **`codex`**. No API keys — watchtell shells out to the CLI you already use. The agent is called **only** at `add` time; the daemon never calls it.
 
 ## Install (from source, until the npm release)
@@ -62,7 +62,9 @@ A generated checker is arbitrary code, so it never runs before you approve it:
 
 ## Notifications
 
-v0.1 has one route: **`notify`** = macOS Notification Center via `osascript` (no extra dependencies). A checker may compile with a different `route=` (e.g. `slack`); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. The Slack webhook plugin is v0.2.
+v0.1 has one route: **`notify`** = macOS Notification Center. A checker may compile with a different `route=` (e.g. `slack`); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. The Slack webhook plugin is v0.2.
+
+**Clickable notifications (optional).** If [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) is available on `PATH` (`brew install terminal-notifier`), watchtell delivers through it so clicking a notification opens the first URL found in the alarm message. Without it, watchtell falls back to `osascript` (notifications still show, just aren't clickable) — no new hard dependency.
 
 ## Development
 
