@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const readline = require('readline');
 const { Command } = require('commander');
 
@@ -11,6 +12,7 @@ const trust = require('./trust');
 const run = require('./run');
 const daemon = require('./daemon');
 const launchd = require('./launchd');
+const skillInstall = require('./skill-install');
 
 function nowIso() {
   return new Date().toISOString();
@@ -268,6 +270,86 @@ function cmdDaemon(action, options) {
   }
 }
 
+// ---- skill -----------------------------------------------------------------
+
+function skillKeys(options) {
+  const keys = [];
+  if (options.claude) keys.push('claude');
+  if (options.codex) keys.push('codex');
+  return keys; // empty = all supported agents
+}
+
+function cmdSkill(action, options) {
+  const homeDir = os.homedir();
+  const source = skillInstall.skillSourceDir();
+  const keys = skillKeys(options);
+
+  switch (action) {
+    case 'install': {
+      const results = skillInstall.install({ homeDir, source, keys });
+      for (const r of results) {
+        switch (r.status) {
+          case 'installed':
+            process.stdout.write(`  ${r.label}: installed -> ${r.linkPath}\n`);
+            break;
+          case 'already-installed':
+            process.stdout.write(`  ${r.label}: already installed (same link)\n`);
+            break;
+          case 'skipped':
+            process.stdout.write(`  ${r.label}: SKIPPED — ${r.message}\n`);
+            break;
+        }
+      }
+      process.stdout.write(
+        `\nSymlinked from ${source}. A 'git pull' in this clone keeps the skill current.\n` +
+          `Manual fallback: ln -s "${source}" <agent-skills-dir>/watchtell\n`
+      );
+      return;
+    }
+    case 'uninstall': {
+      const results = skillInstall.uninstall({ homeDir, source, keys, force: options.force });
+      for (const r of results) {
+        switch (r.status) {
+          case 'removed':
+            process.stdout.write(`  ${r.label}: removed ${r.linkPath}\n`);
+            break;
+          case 'absent':
+            process.stdout.write(`  ${r.label}: not installed (nothing to remove)\n`);
+            break;
+          case 'skipped':
+            process.stdout.write(`  ${r.label}: SKIPPED — ${r.message}\n`);
+            break;
+        }
+      }
+      return;
+    }
+    case 'status': {
+      const results = skillInstall.status({ homeDir, source, keys });
+      for (const r of results) {
+        switch (r.status) {
+          case 'installed':
+            process.stdout.write(`  ${r.label}: installed -> ${r.points}\n`);
+            break;
+          case 'installed-other':
+            process.stdout.write(
+              `  ${r.label}: installed, but points elsewhere -> ${r.points}\n`
+            );
+            break;
+          case 'real-path':
+            process.stdout.write(`  ${r.label}: ${r.message} (${r.linkPath})\n`);
+            break;
+          case 'not-installed':
+            process.stdout.write(`  ${r.label}: not installed\n`);
+            break;
+        }
+      }
+      return;
+    }
+    default:
+      return fail(`unknown skill action '${action}' (use install|uninstall|status)`);
+  }
+}
+
 // ---- wiring ----------------------------------------------------------------
 
 function buildProgram() {
@@ -312,6 +394,15 @@ function buildProgram() {
     .description('control the internal-loop scheduler (install/uninstall manage launchd auto-start)')
     .action(cmdDaemon);
 
+  program
+    .command('skill')
+    .argument('<action>', 'install | uninstall | status')
+    .option('--claude', 'limit to Claude Code (~/.claude/skills/watchtell)')
+    .option('--codex', 'limit to codex (~/.codex/skills/watchtell)')
+    .option('--force', 'uninstall: remove any watchtell symlink, not only ours')
+    .description('symlink this clone\'s coding-agent skill into user-level skill dirs (default: all agents)')
+    .action(cmdSkill);
+
   return program;
 }
 
@@ -320,4 +411,4 @@ async function main(argv) {
   await program.parseAsync(argv);
 }
 
-module.exports = { main, buildProgram, cmdAdd, cmdList, cmdTest, cmdRm, cmdDaemon };
+module.exports = { main, buildProgram, cmdAdd, cmdList, cmdTest, cmdRm, cmdDaemon, cmdSkill };
