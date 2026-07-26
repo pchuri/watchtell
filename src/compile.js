@@ -105,8 +105,7 @@ function resolveTimeoutMs(opts = {}) {
     if (
       Number.isInteger(secs) &&
       secs > 0 &&
-      Number.isFinite(timeoutMs) &&
-      Number.isInteger(timeoutMs) &&
+      Number.isSafeInteger(timeoutMs) &&
       timeoutMs > 0
     ) {
       return timeoutMs;
