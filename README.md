@@ -1,10 +1,10 @@
 # watchtell
 
-> Describe what to watch in plain language. An agent compiles it **once** into a deterministic checker. A local daemon runs it LLM-free and alerts you **only on state transitions**.
+> Describe what to watch in plain language. An agent compiles it into a deterministic checker. A local daemon runs it LLM-free and alerts you **only on state transitions**.
 
 **If a coding agent can check it, you can alarm on it.**
 
-watchtell is a **local-first** alarm tool for macOS: you register arbitrary targets in natural language, a coding-agent CLI compiles each request into a deterministic bash checker a single time, and a local daemon polls it with **zero runtime LLM cost**. It is deliberately *not* a generic web monitor — the point is arbitrary, local, developer-owned checks (HTTP health, JSON thresholds, exchange rates, release tags, process/port liveness, file/command output), not a hosted web-scraping SaaS.
+watchtell is a **local-first** alarm tool for macOS: you register arbitrary targets in natural language, a coding-agent CLI compiles each request into a deterministic bash checker at add time, and a local daemon polls it with **zero runtime LLM cost**. It is deliberately *not* a generic web monitor — the point is arbitrary, local, developer-owned checks (HTTP health, JSON thresholds, exchange rates, release tags, process/port liveness, file/command output), not a hosted web-scraping SaaS.
 
 ```text
 watchtell add "alert me when the exchange rate goes above 1,400"
@@ -28,11 +28,13 @@ npm link            # puts `watchtell` on your PATH
 
 State lives under `~/.watchtell/` (override with `WATCHTELL_HOME`, used by the tests).
 
+Compilation allows 10 minutes per attempt and retries once only when the agent CLI times out. Set `WATCHTELL_COMPILE_TIMEOUT` to a positive whole number of seconds to change the per-attempt limit; invalid values use the default.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `watchtell add "<request>"` | Compile the request once, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). |
+| `watchtell add "<request>"` | Compile the request at add time, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). |
 | `watchtell list` | Show checkers: id, request, interval, route, last state, last fired. |
 | `watchtell test <id>` | Force one run now (ignores the schedule) and show the output/transition. Does not send a notification. |
 | `watchtell rm <id>` | Delete a checker and its trust record + state sidecar. |

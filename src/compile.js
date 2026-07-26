@@ -85,27 +85,89 @@ function which(cmd) {
   return r.status === 0 && r.stdout.trim() !== '';
 }
 
+// Default compile timeout. Complex requests (authenticated checkers with
+// link-list extraction, multi-step transitions, dedupe) can legitimately need
+// ~200-300s of agent reasoning; the old 180s cap killed them mid-thought.
+const DEFAULT_COMPILE_TIMEOUT_MS = 600000;
+// Total attempts on a TIMEOUT (1 initial + 1 retry). Latency is variable, so a
+// fresh call often lands in a faster band; work stays bounded at 2 x timeout.
+const MAX_COMPILE_ATTEMPTS = 2;
+
+// Resolve the per-attempt timeout in ms. Precedence: explicit opts.timeoutMs
+// (tests) > WATCHTELL_COMPILE_TIMEOUT (whole seconds) > default. Invalid or
+// non-positive env values are ignored and fall back to the default.
+function resolveTimeoutMs(opts = {}) {
+  if (opts.timeoutMs) return opts.timeoutMs;
+  const raw = process.env.WATCHTELL_COMPILE_TIMEOUT;
+  if (raw != null && raw.trim() !== '') {
+    const secs = Number(raw);
+    const timeoutMs = secs * 1000;
+    if (
+      Number.isInteger(secs) &&
+      secs > 0 &&
+      Number.isSafeInteger(timeoutMs) &&
+      timeoutMs > 0
+    ) {
+      return timeoutMs;
+    }
+  }
+  return DEFAULT_COMPILE_TIMEOUT_MS;
+}
+
+// spawnSync reports a timeout by killing the child (SIGTERM) and setting
+// r.error.code === 'ETIMEDOUT'. Verified on this Node.
+function isTimeout(r) {
+  return !!(r.error && r.error.code === 'ETIMEDOUT');
+}
+
 // Compile a natural-language request into { meta, script, agent } by invoking the
-// agent CLI exactly ONCE. The full prompt (fixed contract + request) is fed on stdin.
+// agent CLI. The full prompt (fixed contract + request) is fed on stdin. A
+// TIMEOUT (and only a timeout) is retried once — other failures are not
+// transient and surface immediately.
 function compile(request, opts = {}) {
   const cmd = opts.command || resolveCommand();
   const prompt = COMPILE_PROMPT + request + '\n';
-  const r = spawnSync(cmd.file, cmd.args, {
-    input: prompt,
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-    timeout: opts.timeoutMs || 180000,
-  });
-  if (r.error) {
-    throw new CompileError(`failed to run compiler (${cmd.label}): ${r.error.message}`);
+  const timeoutMs = resolveTimeoutMs(opts);
+  for (let attempt = 1; attempt <= MAX_COMPILE_ATTEMPTS; attempt++) {
+    process.stderr.write('compiling (this can take a minute)...\n');
+    const r = spawnSync(cmd.file, cmd.args, {
+      input: prompt,
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: timeoutMs,
+    });
+    if (isTimeout(r)) {
+      if (attempt < MAX_COMPILE_ATTEMPTS) {
+        process.stderr.write(
+          `compile timed out, retrying (${attempt + 1}/${MAX_COMPILE_ATTEMPTS})...\n`
+        );
+        continue;
+      }
+      throw new CompileError(
+        `compiler (${cmd.label}) timed out after ${MAX_COMPILE_ATTEMPTS} attempts ` +
+          `of ${Math.round(timeoutMs / 1000)}s each. Set WATCHTELL_COMPILE_TIMEOUT ` +
+          `(seconds) higher if the request is legitimately complex.`
+      );
+    }
+    if (r.error) {
+      throw new CompileError(`failed to run compiler (${cmd.label}): ${r.error.message}`);
+    }
+    if (r.status !== 0) {
+      throw new CompileError(
+        `compiler (${cmd.label}) exited ${r.status}: ${(r.stderr || '').trim() || 'no stderr'}`
+      );
+    }
+    const parsed = parse(r.stdout);
+    return { ...parsed, agent: cmd.label, raw: r.stdout };
   }
-  if (r.status !== 0) {
-    throw new CompileError(
-      `compiler (${cmd.label}) exited ${r.status}: ${(r.stderr || '').trim() || 'no stderr'}`
-    );
-  }
-  const parsed = parse(r.stdout);
-  return { ...parsed, agent: cmd.label, raw: r.stdout };
 }
 
-module.exports = { COMPILE_PROMPT, CompileError, parse, resolveCommand, compile };
+module.exports = {
+  COMPILE_PROMPT,
+  CompileError,
+  parse,
+  resolveCommand,
+  resolveTimeoutMs,
+  compile,
+  DEFAULT_COMPILE_TIMEOUT_MS,
+};
