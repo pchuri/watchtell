@@ -36,6 +36,16 @@ function withFlakyEnv(env, body) {
   }
 }
 
+test('COMPILE_PROMPT rule 5 does not induce tool-specific timeout flags', () => {
+  // The runtime (src/run.js) enforces a hard 30s SIGKILL timeout, so the
+  // compiler must not tell the model to reach for tool-specific timeout flags
+  // (root fix for the earlier auth-curl `--max-time` passthrough workaround).
+  assert.doesNotMatch(compile.COMPILE_PROMPT, /--max-time/);
+  assert.doesNotMatch(compile.COMPILE_PROMPT, /use curl/i);
+  // The fail-safe half must stay intact.
+  assert.match(compile.COMPILE_PROMPT, /stay silent and keep the previous state/);
+});
+
 test('parse extracts meta and script from the delimiter block', () => {
   const raw = [
     'noise before',
