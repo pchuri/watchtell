@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const { spawnSync } = require('child_process');
 const paths = require('./paths');
 const trust = require('./trust');
@@ -26,24 +27,54 @@ function runChecker(id, opts = {}) {
     return { refused: true, reason: v.reason };
   }
   const timeout = resolveTimeout(opts);
+  const stateFile = paths.statePath(id);
+  const priorState = readState(stateFile);
   const r = spawnSync('bash', [paths.scriptPath(id)], {
     encoding: 'utf8',
     timeout,
     killSignal: 'SIGKILL',
     maxBuffer: 1024 * 1024,
-    env: { ...process.env, WATCHTELL_STATE: paths.statePath(id) },
+    env: { ...process.env, WATCHTELL_STATE: stateFile },
   });
-  const timedOut = r.error && r.error.code === 'ETIMEDOUT';
+  const timedOut = Boolean(r.error && r.error.code === 'ETIMEDOUT');
+  const succeeded = !r.error && r.status === 0;
+  if (!succeeded) restoreState(stateFile, priorState);
   // A checker fires on transition by printing exactly one line; anything else is
   // silence. We relay the first non-empty line as the alarm.
-  const output = timedOut ? '' : firstLine(r.stdout);
+  const output = succeeded ? firstLine(r.stdout) : '';
+  const stderr = (r.stderr || '').trim();
   return {
     refused: false,
     timedOut,
     exitCode: r.status,
     output,
-    stderr: (r.stderr || '').trim(),
+    stderr,
+    error: succeeded ? null : checkerError(r, stderr, timedOut),
   };
+}
+
+function readState(file) {
+  try {
+    return { exists: true, bytes: fs.readFileSync(file) };
+  } catch (e) {
+    if (e.code === 'ENOENT') return { exists: false, bytes: null };
+    throw e;
+  }
+}
+
+function restoreState(file, priorState) {
+  if (priorState.exists) {
+    fs.writeFileSync(file, priorState.bytes);
+  } else {
+    fs.rmSync(file, { force: true });
+  }
+}
+
+function checkerError(result, stderr, timedOut) {
+  if (timedOut) return 'timed out';
+  if (result.error) return result.error.message;
+  if (stderr) return stderr;
+  return `checker exited with status ${result.status}`;
 }
 
 function firstLine(stdout) {

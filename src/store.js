@@ -64,7 +64,8 @@ function listIds() {
   const ids = fs
     .readdirSync(dir)
     .filter((f) => f.endsWith('.meta.json'))
-    .map((f) => f.slice(0, -'.meta.json'.length));
+    .map((f) => f.slice(0, -'.meta.json'.length))
+    .filter((id) => /^[0-9a-f]{6}$/.test(id));
   ids.sort((a, b) => {
     const ta = safeCreatedAt(a);
     const tb = safeCreatedAt(b);

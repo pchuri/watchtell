@@ -104,3 +104,78 @@ test('runDue refuses a tampered checker instead of running it', () => {
     cleanup(home);
   }
 });
+
+test('checker errors stay silent and preserve the previous state', () => {
+  const home = makeHome();
+  try {
+    const id = createChecker(
+      '#!/usr/bin/env bash\nprintf \'changed\\n\' > "$WATCHTELL_STATE"\nprintf \'false alarm\\n\'\nexit 1\n',
+      { interval: 1 }
+    );
+    fs.writeFileSync(paths.statePath(id), 'previous\n');
+    let notified = 0;
+    const result = daemon.runDue({
+      now: 4_000_000,
+      notifyFn: () => (notified++, { ok: true }),
+    }).find((entry) => entry.id === id);
+    assert.strictEqual(result.fired, false);
+    assert.match(result.error, /status 1/);
+    assert.strictEqual(notified, 0);
+    assert.strictEqual(fs.readFileSync(paths.statePath(id), 'utf8'), 'previous\n');
+    assert.match(store.readRuntime(id).lastError, /status 1/);
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('failed notification dispatch is not recorded as fired', () => {
+  const home = makeHome();
+  try {
+    const id = createChecker('#!/usr/bin/env bash\nprintf \'alarm\\n\'\n', { interval: 1 });
+    const result = daemon.runDue({
+      now: 5_000_000,
+      notifyFn: () => ({ ok: false, route: 'notify' }),
+    }).find((entry) => entry.id === id);
+    const runtime = store.readRuntime(id);
+    assert.strictEqual(result.fired, false);
+    assert.strictEqual(runtime.lastFiredAt, null);
+    assert.strictEqual(runtime.lastError, 'notification dispatch failed');
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('detached start confirms ownership and stop waits for exit', () => {
+  const home = makeHome();
+  try {
+    const pid = daemon.startDetached();
+    assert.deepStrictEqual(daemon.status(), {
+      running: true,
+      pid,
+      stale: false,
+      record: JSON.parse(fs.readFileSync(paths.pidPath(), 'utf8')),
+    });
+    assert.throws(() => daemon.startDetached(), /already running/);
+    assert.strictEqual(daemon.stop().stopped, true);
+    assert.strictEqual(daemon.status().running, false);
+  } finally {
+    const st = daemon.status();
+    if (st.running) daemon.stop();
+    cleanup(home);
+  }
+});
+
+test('a mismatched process identity is never treated as the daemon', () => {
+  const home = makeHome();
+  try {
+    fs.writeFileSync(paths.pidPath(), `${JSON.stringify({ pid: process.pid, token: 'reused' })}\n`);
+    const st = daemon.status();
+    assert.strictEqual(st.running, false);
+    assert.strictEqual(st.stale, false);
+    assert.strictEqual(st.foreign, true);
+    assert.strictEqual(daemon.stop().stopped, false);
+    assert.ok(fs.existsSync(paths.pidPath()));
+  } finally {
+    cleanup(home);
+  }
+});

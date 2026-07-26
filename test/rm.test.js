@@ -41,8 +41,13 @@ test('rm deletes checker, trust record, meta, state, and runtime sidecars', () =
 test('remove reports false when nothing existed', () => {
   const home = makeHome();
   try {
-    assert.strictEqual(store.remove('nope99'), false);
+    assert.strictEqual(store.remove('abcdef'), false);
   } finally {
     cleanup(home);
   }
+});
+
+test('checker paths reject ids outside the generated format', () => {
+  assert.throws(() => paths.scriptPath('../abc'), /invalid checker id/);
+  assert.throws(() => paths.metaPath('ABCDEF'), /invalid checker id/);
 });

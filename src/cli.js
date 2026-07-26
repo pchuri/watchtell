@@ -103,6 +103,11 @@ function reportRun(id, res, { immediate }) {
     store.writeRuntime(id, runtime);
     return process.stdout.write(`  timed out after ${run.HARD_TIMEOUT_MS / 1000}s (no alarm)\n`);
   }
+  if (res.error) {
+    runtime.lastError = res.error;
+    store.writeRuntime(id, runtime);
+    return process.stdout.write(`  checker error: ${res.error} (no alarm)\n`);
+  }
   runtime.lastError = null;
   if (res.output) {
     runtime.lastOutput = res.output;
@@ -196,6 +201,7 @@ function cmdDaemon(action, options) {
       const r = daemon.stop();
       if (r.stale) return process.stdout.write(`Cleared stale pid file (pid ${r.pid} was dead).\n`);
       if (r.running === false) return process.stdout.write('Daemon is not running.\n');
+      if (!r.stopped) return fail(`daemon did not stop (pid ${r.pid})`);
       return process.stdout.write(`Daemon stopped (pid ${r.pid}).\n`);
     }
     case 'status': {

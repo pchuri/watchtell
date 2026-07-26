@@ -1,7 +1,7 @@
 'use strict';
 
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const paths = require('./paths');
 const store = require('./store');
@@ -9,6 +9,8 @@ const run = require('./run');
 const notify = require('./notify');
 
 const DEFAULT_POLL_MS = 15000; // how often the loop wakes to look for due checkers
+const START_TIMEOUT_MS = 5000;
+const STOP_TIMEOUT_MS = run.HARD_TIMEOUT_MS + 5000;
 
 // A checker is due when it has never run, or its interval has elapsed since the
 // last run. interval comes from compile-time meta (seconds).
@@ -61,17 +63,33 @@ function runDue(opts = {}) {
       continue;
     }
 
-    updated.lastError = null;
     updated.lastState = readState(id);
+
+    if (res.error) {
+      updated.lastError = res.error;
+      store.writeRuntime(id, updated);
+      logFn(`ERROR ${id}: ${res.error}`);
+      results.push({ id, fired: false, timedOut: res.timedOut, error: res.error });
+      continue;
+    }
 
     if (res.output) {
       const disp = notifyFn(meta.route, `watchtell: ${meta.request}`, res.output);
-      updated.lastFiredAt = now;
       updated.lastOutput = res.output;
+      if (!disp || !disp.ok) {
+        updated.lastError = 'notification dispatch failed';
+        store.writeRuntime(id, updated);
+        logFn(`NOTIFY FAILED ${id}: ${res.output}`);
+        results.push({ id, fired: false, output: res.output, dispatch: disp });
+        continue;
+      }
+      updated.lastError = null;
+      updated.lastFiredAt = now;
       store.writeRuntime(id, updated);
       logFn(`FIRED ${id} [${disp && disp.route}]: ${res.output}`);
       results.push({ id, fired: true, output: res.output, dispatch: disp });
     } else {
+      updated.lastError = null;
       store.writeRuntime(id, updated);
       if (res.timedOut) logFn(`TIMEOUT ${id}`);
       results.push({ id, fired: false, timedOut: res.timedOut });
@@ -84,9 +102,23 @@ function runDue(opts = {}) {
 
 function readPid() {
   const file = paths.pidPath();
-  if (!fs.existsSync(file)) return null;
-  const pid = parseInt(fs.readFileSync(file, 'utf8').trim(), 10);
-  return Number.isFinite(pid) ? pid : null;
+  let contents;
+  try {
+    contents = fs.readFileSync(file, 'utf8').trim();
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+  try {
+    const record = JSON.parse(contents);
+    if (Number.isInteger(record.pid) && record.pid > 0 && typeof record.token === 'string') {
+      return record;
+    }
+  } catch {
+    const pid = Number(contents);
+    if (Number.isInteger(pid) && pid > 0) return { pid, token: null };
+  }
+  return { pid: null, token: null };
 }
 
 function isAlive(pid) {
@@ -99,21 +131,56 @@ function isAlive(pid) {
   }
 }
 
+function processToken(pid) {
+  if (!isAlive(pid)) return null;
+  const result = spawnSync('ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'state='], {
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) return null;
+  const fields = result.stdout.trim().split(/\s+/);
+  const state = fields.pop();
+  if (!state || state.startsWith('Z')) return null;
+  return fields.join(' ') || null;
+}
+
+function ownsProcess(record) {
+  return Boolean(record && record.token && processToken(record.pid) === record.token);
+}
+
 // { running, pid, stale } — stale means a pid file points at a dead process.
 function status() {
-  const pid = readPid();
-  if (pid == null) return { running: false, pid: null, stale: false };
-  if (isAlive(pid)) return { running: true, pid, stale: false };
-  return { running: false, pid, stale: true };
+  const record = readPid();
+  if (record == null) return { running: false, pid: null, stale: false };
+  if (ownsProcess(record)) return { running: true, pid: record.pid, stale: false, record };
+  if (!isAlive(record.pid)) return { running: false, pid: record.pid, stale: true, record };
+  return { running: false, pid: record.pid, stale: false, foreign: true, record };
 }
 
-function writePid(pid) {
+function writePid() {
   store.ensureHome();
-  fs.writeFileSync(paths.pidPath(), `${pid}\n`);
+  const record = { pid: process.pid, token: processToken(process.pid) };
+  if (!record.token) throw new Error('could not determine daemon process identity');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.writeFileSync(paths.pidPath(), `${JSON.stringify(record)}\n`, { flag: 'wx', mode: 0o600 });
+      return record;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      const st = status();
+      if (st.running) throw new Error(`daemon already running (pid ${st.pid})`);
+      clearPid(st.record);
+    }
+  }
+  throw new Error('could not acquire daemon pid file');
 }
 
-function clearPid() {
+function clearPid(expected) {
+  if (expected) {
+    const current = readPid();
+    if (!current || current.pid !== expected.pid || current.token !== expected.token) return false;
+  }
   fs.rmSync(paths.pidPath(), { force: true });
+  return true;
 }
 
 function log(msg) {
@@ -128,12 +195,8 @@ function log(msg) {
 
 // Run the blocking loop in THIS process until signalled. Reclaims a stale pid file.
 function runForeground(opts = {}) {
-  const st = status();
-  if (st.running) {
-    throw new Error(`daemon already running (pid ${st.pid})`);
-  }
   const pollMs = opts.pollMs || parseInt(process.env.WATCHTELL_POLL || '', 10) || DEFAULT_POLL_MS;
-  writePid(process.pid);
+  const ownership = writePid();
   log(`daemon started (pid ${process.pid}, poll ${pollMs}ms)`);
 
   let stopping = false;
@@ -142,7 +205,7 @@ function runForeground(opts = {}) {
     stopping = true;
     log(`daemon stopping (${sig})`);
     clearInterval(timer);
-    clearPid();
+    clearPid(ownership);
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -174,13 +237,24 @@ function startDetached() {
     env: process.env,
   });
   child.unref();
-  return child.pid;
+  fs.closeSync(out);
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const st = status();
+    if (st.running && st.pid === child.pid) return child.pid;
+    if (st.running && st.pid !== child.pid) {
+      throw new Error(`daemon already running (pid ${st.pid})`);
+    }
+    if (!isAlive(child.pid)) break;
+    wait(20);
+  }
+  throw new Error('daemon failed to start');
 }
 
 function stop() {
   const st = status();
   if (st.stale) {
-    clearPid();
+    clearPid(st.record);
     return { stopped: false, stale: true, pid: st.pid };
   }
   if (!st.running) {
@@ -188,12 +262,23 @@ function stop() {
   }
   try {
     process.kill(st.pid, 'SIGTERM');
-  } catch {
-    /* fall through to pid cleanup */
+  } catch (e) {
+    if (e.code !== 'ESRCH') throw e;
   }
-  clearPid();
-  log(`daemon stop signalled (pid ${st.pid})`);
+  const deadline = Date.now() + STOP_TIMEOUT_MS;
+  while (ownsProcess(st.record) && Date.now() < deadline) {
+    wait(25);
+  }
+  if (ownsProcess(st.record)) {
+    return { stopped: false, running: true, timedOut: true, pid: st.pid };
+  }
+  clearPid(st.record);
+  log(`daemon stopped (pid ${st.pid})`);
   return { stopped: true, pid: st.pid };
+}
+
+function wait(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 module.exports = {

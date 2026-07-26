@@ -13,29 +13,40 @@ function checkersDir() {
   return path.join(home(), 'checkers');
 }
 
+function validateId(id) {
+  if (!/^[0-9a-f]{6}$/.test(id)) {
+    throw new Error(`invalid checker id '${id}'`);
+  }
+  return id;
+}
+
+function checkerPath(id, suffix) {
+  return path.join(checkersDir(), `${validateId(id)}${suffix}`);
+}
+
 // The generated, hash-bound bash checker.
 function scriptPath(id) {
-  return path.join(checkersDir(), `${id}.check.sh`);
+  return checkerPath(id, '.check.sh');
 }
 
 // The trust record ("watchtell-check-v1\n<sha256>") that binds the script bytes.
 function trustPath(id) {
-  return path.join(checkersDir(), `${id}.check-trust`);
+  return checkerPath(id, '.check-trust');
 }
 
 // Compile-time metadata: request text, interval, route, createdAt.
 function metaPath(id) {
-  return path.join(checkersDir(), `${id}.meta.json`);
+  return checkerPath(id, '.meta.json');
 }
 
 // The checker's own state sidecar (exposed to it as $WATCHTELL_STATE).
 function statePath(id) {
-  return path.join(checkersDir(), `${id}.state`);
+  return checkerPath(id, '.state');
 }
 
 // Daemon-written runtime record: last run, last state, last fired, last output.
 function runtimePath(id) {
-  return path.join(checkersDir(), `${id}.runtime.json`);
+  return checkerPath(id, '.runtime.json');
 }
 
 function pidPath() {
@@ -49,6 +60,7 @@ function logPath() {
 module.exports = {
   home,
   checkersDir,
+  validateId,
   scriptPath,
   trustPath,
   metaPath,
