@@ -36,7 +36,11 @@ function parseFrontmatter(text) {
     ? []
     : [descriptionHeader];
 
-  for (let i = descriptionIndex + 1; i < lines.length && /^\s/.test(lines[i]); i += 1) {
+  for (
+    let i = descriptionIndex + 1;
+    i < lines.length && (lines[i] === '' || /^\s/.test(lines[i]));
+    i += 1
+  ) {
     descriptionLines.push(lines[i].trim());
   }
 
@@ -57,6 +61,14 @@ test('frontmatter has a name and a non-empty description within the 1536-char ca
     description.length <= 1536,
     `description must be within 1536 chars (was ${description.length})`
   );
+});
+
+test('frontmatter description includes content after blank lines', () => {
+  const { description } = parseFrontmatter(
+    '---\nname: watchtell\ndescription: >-\n  before\n\n  after\n---\n'
+  );
+
+  assert.strictEqual(description, 'before  after');
 });
 
 test('body mentions the real watchtell command names', () => {
