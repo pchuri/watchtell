@@ -3,15 +3,38 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
 const compile = require('../src/compile');
 const paths = require('../src/paths');
 const trust = require('../src/trust');
-const { makeHome, cleanup, FAKE_COMPILER } = require('./helpers');
+const { makeHome, cleanup, FAKE_COMPILER, FIXTURES } = require('./helpers');
 
 const BIN = path.join(__dirname, '..', 'bin', 'watchtell.js');
+const FLAKY_COMPILER = path.join(FIXTURES, 'flaky-timeout-compiler.sh');
+
+// Run body with a fresh counter file and env knobs for the flaky/counting
+// fixtures, restoring the previous env afterwards.
+function withFlakyEnv(env, body) {
+  const saved = {};
+  const counter = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'watchtell-flaky-')), 'n');
+  const full = { FLAKY_COUNTER: counter, ...env };
+  for (const k of Object.keys(full)) {
+    saved[k] = process.env[k];
+    process.env[k] = full[k];
+  }
+  try {
+    return body(counter);
+  } finally {
+    for (const k of Object.keys(full)) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    fs.rmSync(path.dirname(counter), { recursive: true, force: true });
+  }
+}
 
 test('parse extracts meta and script from the delimiter block', () => {
   const raw = [
@@ -59,6 +82,79 @@ test('resolveCommand errors clearly when no agent CLI is available', () => {
     process.env.PATH = saved.PATH;
     if (saved.WATCHTELL_COMPILER_CMD) process.env.WATCHTELL_COMPILER_CMD = saved.WATCHTELL_COMPILER_CMD;
   }
+});
+
+test('resolveTimeoutMs: opts.timeoutMs wins, env parsed as seconds, invalid -> default', () => {
+  const saved = process.env.WATCHTELL_COMPILE_TIMEOUT;
+  try {
+    // Default when unset.
+    delete process.env.WATCHTELL_COMPILE_TIMEOUT;
+    assert.strictEqual(compile.resolveTimeoutMs(), compile.DEFAULT_COMPILE_TIMEOUT_MS);
+    assert.strictEqual(compile.DEFAULT_COMPILE_TIMEOUT_MS, 600000);
+
+    // Valid seconds -> ms.
+    process.env.WATCHTELL_COMPILE_TIMEOUT = '300';
+    assert.strictEqual(compile.resolveTimeoutMs(), 300000);
+
+    // opts.timeoutMs takes precedence over the env var.
+    assert.strictEqual(compile.resolveTimeoutMs({ timeoutMs: 1234 }), 1234);
+
+    // Invalid / non-positive values fall back to the default.
+    for (const bad of ['', '  ', 'abc', '0', '-5', 'NaN']) {
+      process.env.WATCHTELL_COMPILE_TIMEOUT = bad;
+      assert.strictEqual(
+        compile.resolveTimeoutMs(),
+        compile.DEFAULT_COMPILE_TIMEOUT_MS,
+        `bad value ${JSON.stringify(bad)} should fall back to default`
+      );
+    }
+  } finally {
+    if (saved === undefined) delete process.env.WATCHTELL_COMPILE_TIMEOUT;
+    else process.env.WATCHTELL_COMPILE_TIMEOUT = saved;
+  }
+});
+
+test('compile retries once on a timeout and succeeds on the second attempt', () => {
+  withFlakyEnv({ FLAKY_SLEEP: '3' }, (counter) => {
+    const command = { file: 'bash', args: [FLAKY_COMPILER], label: 'flaky' };
+    const out = compile.compile('watch the thing', { command, timeoutMs: 500 });
+    assert.strictEqual(out.meta.interval, 5);
+    assert.match(out.script, /^#!\/usr\/bin\/env bash/);
+    // Two invocations: the timed-out first, then the fast retry.
+    assert.strictEqual(fs.readFileSync(counter, 'utf8'), '2');
+  });
+});
+
+test('compile does NOT retry a non-timeout error (surfaces immediately)', () => {
+  withFlakyEnv({}, (counter) => {
+    const command = {
+      file: 'sh',
+      args: ['-c', `n=$(cat "$FLAKY_COUNTER" 2>/dev/null || echo 0); echo $((n+1)) > "$FLAKY_COUNTER"; echo boom >&2; exit 3`],
+      label: 'boom',
+    };
+    assert.throws(
+      () => compile.compile('watch', { command, timeoutMs: 500 }),
+      /exited 3.*boom/s
+    );
+    // Called exactly once — no retry on a non-transient error.
+    assert.strictEqual(fs.readFileSync(counter, 'utf8').trim(), '1');
+  });
+});
+
+test('compile fails after 2 attempts when every attempt times out', () => {
+  withFlakyEnv({}, (counter) => {
+    const command = {
+      file: 'sh',
+      args: ['-c', `n=$(cat "$FLAKY_COUNTER" 2>/dev/null || echo 0); echo $((n+1)) > "$FLAKY_COUNTER"; sleep 5`],
+      label: 'slow',
+    };
+    assert.throws(
+      () => compile.compile('watch', { command, timeoutMs: 400 }),
+      /timed out after 2 attempts/
+    );
+    // Both attempts were made.
+    assert.strictEqual(fs.readFileSync(counter, 'utf8').trim(), '2');
+  });
 });
 
 test('add (with fixture compiler) compiles, keeps, hash-binds, and runs immediate test', () => {
