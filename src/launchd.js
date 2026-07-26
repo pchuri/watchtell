@@ -1,9 +1,8 @@
 'use strict';
 
-// launchd auto-start (macOS only). Everything here except install()/uninstall()
-// is a pure function so the plist XML and path resolution can be unit-tested
-// without ever invoking launchctl. The real launchctl call is gated behind the
-// darwin runtime path and is injectable (opts.launchctlFn) for tests.
+// launchd auto-start (macOS only). The plist builder and platform guard are pure
+// so they can be unit-tested without invoking launchctl. The real launchctl call
+// is gated behind the darwin runtime path and is injectable for tests.
 
 const fs = require('fs');
 const os = require('os');
@@ -136,8 +135,8 @@ function unloadService(launchctlFn) {
   return { unloaded: state.status !== 0, result, state };
 }
 
-// Write the plist and load it via launchctl. opts.plistPath / opts.launchctlFn
-// exist only so tests can isolate the filesystem and avoid touching launchctl.
+// Write the plist and load it via launchctl. The opts seams exist only so tests
+// can isolate the platform and filesystem and avoid touching launchctl.
 function install(opts = {}) {
   const platform = opts.platform || process.platform;
   if (!isSupportedPlatform(platform)) {
