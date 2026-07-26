@@ -7,6 +7,7 @@ const paths = require('./paths');
 const store = require('./store');
 const run = require('./run');
 const notify = require('./notify');
+const { MIN_INTERVAL_SECONDS } = require('./compile');
 
 const DEFAULT_POLL_MS = 15000; // how often the loop wakes to look for due checkers
 const START_TIMEOUT_MS = 5000;
@@ -17,7 +18,10 @@ const KILL_TIMEOUT_MS = 5000;
 // last run. interval comes from compile-time meta (seconds).
 function isDue(runtime, meta, now) {
   if (!runtime || runtime.lastRunAt == null) return true;
-  const intervalMs = (meta.interval || 300) * 1000;
+  // Defense in depth: honor the hard floor even for hand-edited meta.json
+  // (the trust hash covers only the script bytes, not the meta).
+  const interval = Math.max(meta.interval || 300, MIN_INTERVAL_SECONDS);
+  const intervalMs = interval * 1000;
   return now - runtime.lastRunAt >= intervalMs;
 }
 

@@ -17,6 +17,13 @@ test('isDue: never-run is due, within interval is not, elapsed is due', () => {
   assert.strictEqual(daemon.isDue({ lastRunAt: 1000 }, meta, 1000 + 60 * 1000), true);
 });
 
+test('isDue: a hand-edited sub-minute interval is treated as the 60s floor', () => {
+  const meta = { interval: 5 }; // hand-edited meta.json, below the floor
+  // 5s would make it due at +5s; the floor keeps it not-due until +60s.
+  assert.strictEqual(daemon.isDue({ lastRunAt: 1000 }, meta, 1000 + 5 * 1000), false);
+  assert.strictEqual(daemon.isDue({ lastRunAt: 1000 }, meta, 1000 + 60 * 1000), true);
+});
+
 test('runDue runs only due checkers', () => {
   const home = makeHome();
   try {
@@ -44,6 +51,7 @@ test('transition relay: fires once on transition, dispatches notify, dedupes', (
 
     const id = createChecker(probeChecker(probe), { interval: 1, request: 'probe trips' });
 
+    // Runs are spaced >60s apart so each clears the runtime interval floor.
     // #1 baseline (probe absent -> ok): silent, no notification.
     let res = daemon.runDue({ now: 1_000_000 });
     assert.strictEqual(res.find((r) => r.id === id).fired, false);
@@ -51,7 +59,7 @@ test('transition relay: fires once on transition, dispatches notify, dedupes', (
 
     // Flip probe to ALARM, run again -> transition fires + notifies.
     fs.writeFileSync(probe, 'ALARM\n');
-    res = daemon.runDue({ now: 1_005_000 });
+    res = daemon.runDue({ now: 1_070_000 });
     const fired = res.find((r) => r.id === id);
     assert.strictEqual(fired.fired, true);
     assert.match(fired.output, /entered ALARM/);
@@ -61,7 +69,7 @@ test('transition relay: fires once on transition, dispatches notify, dedupes', (
     assert.ok(store.readRuntime(id).lastFiredAt, 'lastFiredAt recorded');
 
     // #3 probe still ALARM: checker stays silent (dedupe) -> no new notification.
-    res = daemon.runDue({ now: 1_010_000 });
+    res = daemon.runDue({ now: 1_140_000 });
     assert.strictEqual(res.find((r) => r.id === id).fired, false);
     const log2 = fs.readFileSync(notifyLog, 'utf8').trim().split('\n');
     assert.strictEqual(log2.length, 1, 'no re-alarm while condition persists');

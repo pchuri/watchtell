@@ -72,6 +72,22 @@ test('parse defaults interval/route when meta is sparse', () => {
   assert.strictEqual(meta.route, 'notify');
 });
 
+test('parse clamps a sub-minute interval to the 60s floor with a notice', () => {
+  const raw = '<<<META>>>\ninterval=30\n<<<SCRIPT>>>\n#!/bin/bash\ntrue\n<<<END>>>';
+  const parsed = compile.parse(raw);
+  assert.strictEqual(parsed.meta.interval, 60);
+  assert.match(parsed.intervalNotice, /30s is below the 60s minimum; using 60s/);
+});
+
+test('parse leaves interval at or above the floor unchanged (no notice)', () => {
+  for (const n of [60, 300]) {
+    const raw = `<<<META>>>\ninterval=${n}\n<<<SCRIPT>>>\n#!/bin/bash\ntrue\n<<<END>>>`;
+    const parsed = compile.parse(raw);
+    assert.strictEqual(parsed.meta.interval, n);
+    assert.strictEqual(parsed.intervalNotice, null);
+  }
+});
+
 test('parse throws on a missing block', () => {
   assert.throws(() => compile.parse('no delimiters here'), compile.CompileError);
 });
@@ -139,7 +155,8 @@ test('compile retries once on a timeout and succeeds on the second attempt', () 
   withFlakyEnv({ FLAKY_SLEEP: '3' }, (counter) => {
     const command = { file: 'bash', args: [FLAKY_COMPILER], label: 'flaky' };
     const out = compile.compile('watch the thing', { command, timeoutMs: 500 });
-    assert.strictEqual(out.meta.interval, 5);
+    // Fixture emits interval=5, which the registration floor clamps to 60.
+    assert.strictEqual(out.meta.interval, 60);
     assert.match(out.script, /^#!\/usr\/bin\/env bash/);
     // Two invocations: the timed-out first, then the fast retry.
     assert.strictEqual(fs.readFileSync(counter, 'utf8'), '2');
@@ -195,6 +212,9 @@ test('add (with fixture compiler) compiles, keeps, hash-binds, and runs immediat
     assert.match(r.stdout, /Generated checker/);
     assert.match(r.stdout, /Kept as [0-9a-f]{6}/);
     assert.match(r.stdout, /immediate test/);
+    // FAKE_INTERVAL=5 is below the floor: the registration clamp prints a
+    // notice and the kept checker records 60s.
+    assert.match(r.stdout, /interval 5s is below the 60s minimum; using 60s/);
 
     // Exactly one checker persisted, with meta parsed and trust bound.
     const dir = paths.checkersDir();
@@ -202,7 +222,7 @@ test('add (with fixture compiler) compiles, keeps, hash-binds, and runs immediat
     assert.strictEqual(metas.length, 1);
     const id = metas[0].slice(0, -'.meta.json'.length);
     const meta = JSON.parse(fs.readFileSync(paths.metaPath(id), 'utf8'));
-    assert.strictEqual(meta.interval, 5);
+    assert.strictEqual(meta.interval, 60);
     assert.strictEqual(meta.route, 'notify');
     assert.strictEqual(meta.request, 'alert me when the probe trips');
     assert.ok(fs.existsSync(paths.scriptPath(id)));
