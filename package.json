@@ -1,0 +1,33 @@
+{
+  "name": "watchtell",
+  "version": "0.1.0",
+  "description": "Natural-language custom alarm CLI + local daemon for macOS. If a coding agent can check it, you can alarm on it.",
+  "keywords": [
+    "alarm",
+    "monitor",
+    "cli",
+    "daemon",
+    "macos",
+    "natural-language"
+  ],
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "watchtell": "bin/watchtell.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "smoke": "bash test/smoke.sh"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  }
+}
