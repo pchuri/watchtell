@@ -40,6 +40,23 @@ Compilation allows 10 minutes per attempt and retries once only when the agent C
 | `watchtell rm <id>` | Delete a checker and its trust record + state sidecar. |
 | `watchtell daemon start [--detach]` | Run the internal-loop scheduler (foreground by default; `--detach` backgrounds it). |
 | `watchtell daemon stop` / `status` | Stop the daemon / report running / not running / stale-pid. |
+| `watchtell daemon install` / `uninstall` | Install/remove the launchd auto-start agent (macOS only) so the daemon survives reboot/logout. |
+
+## Auto-start on reboot (launchd)
+
+On macOS, `watchtell daemon install` registers a **LaunchAgent** so the polling daemon starts at login and restarts if it crashes — your registered alarms keep watching across reboots and logouts.
+
+- **Plist location:** `~/Library/LaunchAgents/com.watchtell.daemon.plist` (Label `com.watchtell.daemon`).
+- The plist hard-codes the absolute `node` binary and `bin/watchtell.js` path resolved at install time (it does not rely on `PATH`) and runs `daemon start --foreground` so launchd owns the process lifecycle (`RunAtLoad` + `KeepAlive`). stdout/stderr go to the daemon log.
+- If a non-default `WATCHTELL_HOME` is set at install time, it is preserved in the agent's `EnvironmentVariables` so it keeps pointing at that home after reboot.
+- Install first stops any plain detached daemon so launchd owns a single instance (no double-polling).
+
+```sh
+watchtell daemon install     # register + start via launchd (auto-starts on reboot)
+watchtell daemon uninstall   # unload + remove the plist (idempotent)
+```
+
+Non-macOS: `install`/`uninstall` refuse with a friendly message — on Linux, run the daemon under a systemd user unit (not yet built in).
 
 ## The checker contract
 
@@ -79,4 +96,4 @@ The smoke script uses a fixture compiler and a mock notifier because sandboxes/C
 
 A checker that ignores its 30s timeout can force the daemon into a forced stop: if the daemon does not exit within the stop grace period, `watchtell daemon stop` escalates to `SIGKILL`, which can orphan an in-flight checker (it loses the daemon's timeout supervisor but still self-terminates on its own, since checkers are short probes). Fully reaping an in-flight checker on forced stop is deferred to v0.2.
 
-> Work in progress — not yet released. launchd auto-start and Slack routing are planned for v0.2.
+> Work in progress — not yet released. launchd auto-start is available now via `watchtell daemon install` (see above); Slack routing is planned for v0.2.
