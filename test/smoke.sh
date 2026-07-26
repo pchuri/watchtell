@@ -21,7 +21,6 @@ export WATCHTELL_COMPILER_CMD="bash $FIXTURE"
 export WATCHTELL_TEST_PROBE="$PROBE"
 # Mock osascript: record dispatched notifications to a file.
 export WATCHTELL_NOTIFY_CMD="printf '%s|%s\n' \"\$WATCHTELL_ROUTE\" \"\$WATCHTELL_MESSAGE\" >> $NOTIFY_LOG"
-# Short interval + fast poll so the daemon fires within the smoke's lifetime.
 export FAKE_INTERVAL=1
 export WATCHTELL_POLL=500
 
@@ -46,7 +45,8 @@ echo "$OUT"
 echo "$OUT" | grep -q "TRANSITION" || { echo "FAIL: expected a transition"; exit 1; }
 
 say "reset probe so the daemon observes ok->alarm itself"
-rm -f "$PROBE" "$HOME_DIR/checkers/$ID.state"
+rm -f "$PROBE"
+node "$BIN" test "$ID"
 
 say "daemon start --detach; status"
 node "$BIN" daemon start --detach
@@ -55,6 +55,7 @@ node "$BIN" daemon status | grep -q running || { echo "FAIL: daemon not running"
 
 say "trip the probe; wait for the daemon to fire a notification"
 printf 'ALARM\n' > "$PROBE"
+node -e 'const store = require(process.argv[1]); const { MIN_INTERVAL_SECONDS } = require(process.argv[2]); const id = process.argv[3]; const runtime = store.readRuntime(id); runtime.lastRunAt = Date.now() - MIN_INTERVAL_SECONDS * 1000; store.writeRuntime(id, runtime);' "$ROOT/src/store" "$ROOT/src/compile" "$ID"
 for _ in $(seq 1 20); do
   [ -s "$NOTIFY_LOG" ] && break
   sleep 0.5
