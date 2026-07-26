@@ -17,10 +17,6 @@ function resolveTimeout(opts) {
 // Run a checker exactly once. The trust boundary is enforced here: the script is
 // re-hashed against its trust record immediately before execution and REFUSED on
 // any mismatch/absence — nothing is quarantined silently, the caller reports it.
-//
-// Returns:
-//   { refused: true, reason }                       — trust check failed, not run
-//   { refused: false, output, timedOut, exitCode }  — ran; output is trimmed stdout
 function runChecker(id, opts = {}) {
   const v = trust.verify(id);
   if (!v.ok) {

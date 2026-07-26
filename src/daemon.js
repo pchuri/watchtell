@@ -194,7 +194,7 @@ function log(msg) {
   }
 }
 
-// Run the blocking loop in THIS process until signalled. Reclaims a stale pid file.
+// Run the blocking loop in THIS process until signalled. Reclaims an unowned pid file.
 function runForeground(opts = {}) {
   const pollMs = opts.pollMs || parseInt(process.env.WATCHTELL_POLL || '', 10) || DEFAULT_POLL_MS;
   const ownership = writePid();

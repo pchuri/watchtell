@@ -44,7 +44,7 @@ function statePath(id) {
   return checkerPath(id, '.state');
 }
 
-// Daemon-written runtime record: last run, last state, last fired, last output.
+// Daemon-written runtime record: last run, state, output, error, and notification time.
 function runtimePath(id) {
   return checkerPath(id, '.runtime.json');
 }
