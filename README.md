@@ -67,7 +67,7 @@ Every generated checker is deterministic bash that:
 2. **Is silent by default** — no stdout when nothing alarm-worthy has happened.
 3. **Fires on transitions only** — exactly one human-readable line when the watched condition *changes* (ok→failing, below→above a threshold, present→absent, old→new release). It persists the previous state in a sidecar (`$WATCHTELL_STATE`) so the same ongoing condition does not re-alarm every poll; a recovery transition may print one line too.
 4. **Never alarms on the first run** — the first observation just records a baseline.
-5. **Is timely and fail-safe** — finishes within a hard **30s** timeout; a probe error (network down, missing tool, unparseable output) is *not* an alarm unless the request is specifically about that failure.
+5. **Is timely and fail-safe** — the runtime enforces a hard **30s** timeout, so generated checkers do not add tool-specific timeout or retry flags; a probe error (network down, missing tool, unparseable output) is *not* an alarm unless the request is specifically about that failure.
 
 Transition dedupe lives inside the checker; the daemon just relays a non-empty line to the notification route.
 
@@ -95,6 +95,6 @@ The smoke script uses a fixture compiler and a mock notifier because sandboxes/C
 
 ## Limitations (v0.1)
 
-A checker that ignores its 30s timeout can force the daemon into a forced stop: if the daemon does not exit within the stop grace period, `watchtell daemon stop` escalates to `SIGKILL`, which can orphan an in-flight checker (it loses the daemon's timeout supervisor but still self-terminates on its own, since checkers are short probes). Fully reaping an in-flight checker on forced stop is deferred to v0.2.
+If the daemon does not exit within the stop grace period, `watchtell daemon stop` escalates to `SIGKILL`, which can orphan an in-flight checker and remove its runtime timeout supervisor. Fully reaping an in-flight checker on forced stop is deferred to v0.2.
 
 > Work in progress — not yet released. Slack routing is planned for v0.2.
