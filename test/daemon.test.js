@@ -91,6 +91,27 @@ test('runDue enforces the per-run timeout (no fire on timeout)', () => {
   }
 });
 
+test('timeout kills background checker processes before restoring state', async () => {
+  const home = makeHome();
+  const saved = process.env.WATCHTELL_TIMEOUT_MS;
+  try {
+    process.env.WATCHTELL_TIMEOUT_MS = '100';
+    const id = createChecker(
+      '#!/usr/bin/env bash\n(sleep 0.4; printf \'late\\n\' > "$WATCHTELL_STATE") &\nsleep 5\n',
+      { interval: 1 }
+    );
+    fs.writeFileSync(paths.statePath(id), 'previous\n');
+    const result = daemon.runDue({ now: 2_500_000 }).find((entry) => entry.id === id);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assert.strictEqual(result.timedOut, true);
+    assert.strictEqual(fs.readFileSync(paths.statePath(id), 'utf8'), 'previous\n');
+  } finally {
+    if (saved === undefined) delete process.env.WATCHTELL_TIMEOUT_MS;
+    else process.env.WATCHTELL_TIMEOUT_MS = saved;
+    cleanup(home);
+  }
+});
+
 test('runDue refuses a tampered checker instead of running it', () => {
   const home = makeHome();
   try {
@@ -161,6 +182,28 @@ test('detached start confirms ownership and stop waits for exit', () => {
   } finally {
     const st = daemon.status();
     if (st.running) daemon.stop();
+    cleanup(home);
+  }
+});
+
+test('stop force-kills an owned daemon after the grace period', async () => {
+  const home = makeHome();
+  try {
+    const marker = path.join(home, 'checker-started');
+    createChecker(`#!/usr/bin/env bash\nprintf started > "${marker}"\nsleep 1\n`, { interval: 1 });
+    daemon.startDetached();
+    const deadline = Date.now() + 1000;
+    while (!fs.existsSync(marker) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(fs.existsSync(marker));
+    const result = daemon.stop({ graceMs: 50 });
+    assert.strictEqual(result.stopped, true);
+    assert.strictEqual(result.forced, true);
+    assert.strictEqual(daemon.status().running, false);
+  } finally {
+    const st = daemon.status();
+    if (st.running) daemon.stop({ graceMs: 50 });
     cleanup(home);
   }
 });

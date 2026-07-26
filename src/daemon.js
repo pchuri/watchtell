@@ -11,6 +11,7 @@ const notify = require('./notify');
 const DEFAULT_POLL_MS = 15000; // how often the loop wakes to look for due checkers
 const START_TIMEOUT_MS = 5000;
 const STOP_TIMEOUT_MS = run.HARD_TIMEOUT_MS + 5000;
+const KILL_TIMEOUT_MS = 5000;
 
 // A checker is due when it has never run, or its interval has elapsed since the
 // last run. interval comes from compile-time meta (seconds).
@@ -251,7 +252,7 @@ function startDetached() {
   throw new Error('daemon failed to start');
 }
 
-function stop() {
+function stop(opts = {}) {
   const st = status();
   if (st.stale) {
     clearPid(st.record);
@@ -260,21 +261,36 @@ function stop() {
   if (!st.running) {
     return { stopped: false, running: false };
   }
-  try {
-    process.kill(st.pid, 'SIGTERM');
-  } catch (e) {
-    if (e.code !== 'ESRCH') throw e;
-  }
-  const deadline = Date.now() + STOP_TIMEOUT_MS;
+  signalOwnedProcess(st.record, 'SIGTERM');
+  const deadline = Date.now() + (opts.graceMs ?? STOP_TIMEOUT_MS);
   while (ownsProcess(st.record) && Date.now() < deadline) {
     wait(25);
   }
+  let forced = false;
   if (ownsProcess(st.record)) {
-    return { stopped: false, running: true, timedOut: true, pid: st.pid };
+    forced = signalOwnedProcess(st.record, 'SIGKILL');
+    const killDeadline = Date.now() + KILL_TIMEOUT_MS;
+    while (ownsProcess(st.record) && Date.now() < killDeadline) {
+      wait(25);
+    }
+  }
+  if (ownsProcess(st.record)) {
+    return { stopped: false, running: true, timedOut: true, pid: st.pid, forced };
   }
   clearPid(st.record);
   log(`daemon stopped (pid ${st.pid})`);
-  return { stopped: true, pid: st.pid };
+  return { stopped: true, pid: st.pid, forced };
+}
+
+function signalOwnedProcess(record, signal) {
+  if (!ownsProcess(record)) return false;
+  try {
+    process.kill(record.pid, signal);
+    return true;
+  } catch (e) {
+    if (e.code === 'ESRCH') return false;
+    throw e;
+  }
 }
 
 function wait(ms) {
