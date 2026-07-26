@@ -6,6 +6,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **Trust boundary (`src/trust.js`).** Keep = SHA-256 of exact script bytes into `<id>.check-trust`. The daemon and `test` re-hash before every run and refuse on mismatch/absence. Any change to a checker's bytes disables it until re-added.
 - **Testing without live LLM/network.** Override the compiler with `WATCHTELL_COMPILER_CMD` (see `test/fixtures/fake-compiler.sh`), the notifier with `WATCHTELL_NOTIFY_CMD`, the per-run timeout with `WATCHTELL_TIMEOUT_MS`, and the home with `WATCHTELL_HOME`. `src/daemon.js` `runDue({now, notifyFn})` is the testable scheduler core. `npm test` = `node --test`; `npm run smoke` drives the real daemon.
 - **launchd test isolation (`src/launchd.js`).** Exercise install/uninstall through the `opts.platform`/`opts.plistPath`/`opts.launchctlFn` seams; tests must never touch the real `~/Library/LaunchAgents` or call real `launchctl`.
+- **Coding-agent skill (`skills/watchtell/SKILL.md`).** Installer-facing Agent Skill for handing watches off to the daemon. It defers to `watchtell --help` for the command surface but hard-codes command names, flags, and output strings (`meta: interval=`, `silent (no transition)`, daemon subcommands). **When CLI commands/flags/output change, update `skills/watchtell/SKILL.md`** (`test/skill.test.js` guards its frontmatter + command mentions).
 - **Provenance (read-only, outside repo):** scout `data/nlalarm-scout-s1/report.md`, spike `data/watchtell-spike-v1/` under `~/dev/firstmate/`.
 
 ## Maintaining this file

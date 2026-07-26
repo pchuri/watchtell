@@ -42,6 +42,27 @@ Compilation allows 10 minutes per attempt and retries once only when the agent C
 | `watchtell daemon stop` / `status` | Stop the daemon / report running / not running / stale-pid. |
 | `watchtell daemon install` / `uninstall` | Install/remove the launchd auto-start agent (macOS only) so the daemon resumes at the next login after a reboot or logout. |
 
+## Coding-agent skill
+
+`skills/watchtell/SKILL.md` is an [Agent Skill](https://agentskills.io) that teaches a coding agent
+(Claude Code, codex) to hand off long-lived watching to the watchtell daemon: recognise a "tell me when X
+changes later" request, get consent, compose a high-quality alarm request, run `watchtell add`, review the
+generated checker, and confirm the daemon is polling. The frontmatter is tool-neutral (`name` +
+`description` only) so the same file works for both tools.
+
+Install it at the **user level** by symlink (the daemon is user-global, so the skill should be too):
+
+```sh
+mkdir -p ~/.claude/skills ~/.codex/skills
+# Claude Code
+ln -s "$(pwd)/skills/watchtell" ~/.claude/skills/watchtell
+# codex
+ln -s "$(pwd)/skills/watchtell" ~/.codex/skills/watchtell
+```
+
+Run these from inside your clone. Because it's a symlink into the clone, a `git pull` keeps the installed
+skill current — no re-install needed.
+
 ## Auto-start at login (launchd)
 
 On macOS, `watchtell daemon install` registers a **LaunchAgent** so the polling daemon starts at login and restarts if it crashes. A user LaunchAgent does not run while you are logged out; after a reboot or logout, polling resumes at your next login.
