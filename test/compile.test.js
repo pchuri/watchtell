@@ -100,7 +100,7 @@ test('resolveTimeoutMs: opts.timeoutMs wins, env parsed as seconds, invalid -> d
     assert.strictEqual(compile.resolveTimeoutMs({ timeoutMs: 1234 }), 1234);
 
     // Invalid / non-positive values fall back to the default.
-    for (const bad of ['', '  ', 'abc', '0', '-5', 'NaN']) {
+    for (const bad of ['', '  ', 'abc', '0', '-5', 'NaN', '0.0001', '0.5', String(Number.MAX_VALUE)]) {
       process.env.WATCHTELL_COMPILE_TIMEOUT = bad;
       assert.strictEqual(
         compile.resolveTimeoutMs(),

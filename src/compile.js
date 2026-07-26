@@ -101,7 +101,16 @@ function resolveTimeoutMs(opts = {}) {
   const raw = process.env.WATCHTELL_COMPILE_TIMEOUT;
   if (raw != null && raw.trim() !== '') {
     const secs = Number(raw);
-    if (Number.isFinite(secs) && secs > 0) return Math.round(secs * 1000);
+    const timeoutMs = secs * 1000;
+    if (
+      Number.isInteger(secs) &&
+      secs > 0 &&
+      Number.isFinite(timeoutMs) &&
+      Number.isInteger(timeoutMs) &&
+      timeoutMs > 0
+    ) {
+      return timeoutMs;
+    }
   }
   return DEFAULT_COMPILE_TIMEOUT_MS;
 }
