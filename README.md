@@ -93,6 +93,10 @@ npm run smoke     # end-to-end happy path with a fixture compiler + mock notifie
 
 The smoke script uses a fixture compiler and a mock notifier because sandboxes/CI have no GUI session for real Notification Center; the happy path (add → keep+bind → list → test → daemon fire → rm) is otherwise exercised against the real daemon.
 
+## Poll interval floor
+
+The poll interval is inferred by the compiler from your request. watchtell enforces a **hard 60-second minimum**: a compiled interval below 60s is clamped up to 60s at add time (with a notice on stdout), and the daemon also treats any interval below 60s as 60s at runtime — so a hand-edited `~/.watchtell/checkers/<id>.meta.json` cannot poll faster either. As a best practice, prefer **5 minutes or longer** unless you genuinely need tighter latency.
+
 ## Limitations (v0.1)
 
 If the daemon does not exit within the stop grace period, `watchtell daemon stop` escalates to `SIGKILL`, which can orphan an in-flight checker and remove its runtime timeout supervisor. Fully reaping an in-flight checker on forced stop is deferred to v0.2.

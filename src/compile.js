@@ -28,6 +28,26 @@ route=<notify|slack>
 The natural-language alarm request:
 `;
 
+// Hard minimum poll interval (seconds). Enforced at registration (clamp, below)
+// and again at runtime in the daemon (defense in depth against hand-edited
+// meta.json). This is the ONE owner of the value — daemon.js imports it here.
+// Clamping (not rejecting) is deliberate: the interval is LLM-inferred, so a
+// mis-inference should not force a whole re-compile. Skill/README guidance still
+// recommends >=5 min as best practice; this is only the abuse floor.
+const MIN_INTERVAL_SECONDS = 60;
+
+// Clamp an interval to the floor. Returns the effective interval plus a
+// user-facing notice string when clamping occurred (null otherwise).
+function clampInterval(seconds) {
+  if (Number.isFinite(seconds) && seconds < MIN_INTERVAL_SECONDS) {
+    return {
+      interval: MIN_INTERVAL_SECONDS,
+      notice: `interval ${seconds}s is below the ${MIN_INTERVAL_SECONDS}s minimum; using ${MIN_INTERVAL_SECONDS}s`,
+    };
+  }
+  return { interval: seconds, notice: null };
+}
+
 class CompileError extends Error {}
 
 // Parse the spike's <<<META>>>/<<<SCRIPT>>>/<<<END>>> delimiter format out of
@@ -51,12 +71,17 @@ function parse(raw) {
       meta.route = m[2];
     }
   }
+  // Enforce the registration floor: a sub-minute LLM-inferred interval is
+  // clamped up to the minimum so it cannot register abusive polling.
+  const floored = clampInterval(meta.interval);
+  meta.interval = floored.interval;
+
   let script = scriptMatch[1];
   if (!script.endsWith('\n')) script += '\n';
   if (!/^#!/.test(script)) {
     throw new CompileError('generated checker is missing a shebang line');
   }
-  return { meta, script };
+  return { meta, script, intervalNotice: floored.notice };
 }
 
 // Resolve which agent CLI to invoke. WATCHTELL_COMPILER_CMD overrides everything
@@ -165,6 +190,8 @@ function compile(request, opts = {}) {
 module.exports = {
   COMPILE_PROMPT,
   CompileError,
+  MIN_INTERVAL_SECONDS,
+  clampInterval,
   parse,
   resolveCommand,
   resolveTimeoutMs,

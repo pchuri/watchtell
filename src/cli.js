@@ -47,6 +47,9 @@ async function cmdAdd(request, options) {
   const { meta, script } = compiled;
   process.stdout.write(`\nCompiled by ${compiled.agent}. Generated checker:\n\n`);
   process.stdout.write(script.replace(/^/gm, '  '));
+  if (compiled.intervalNotice) {
+    process.stdout.write(`  ${compiled.intervalNotice}\n`);
+  }
   process.stdout.write(`\n  meta: interval=${meta.interval}s route=${meta.route}\n`);
   if (!store.SUPPORTED_ROUTES.includes(meta.route)) {
     process.stdout.write(
@@ -278,7 +281,10 @@ function buildProgram() {
     .command('add')
     .argument('<request>', 'natural-language alarm request')
     .option('--yes', 'keep without interactive review (trusts the generator)')
-    .description('compile a request into a checker, review it, keep + hash-bind it')
+    .description(
+      'compile a request into a checker, review it, keep + hash-bind it ' +
+        '(poll interval is clamped to a 60s minimum; >=5 min recommended)'
+    )
     .action(cmdAdd);
 
   program
