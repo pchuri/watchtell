@@ -14,11 +14,33 @@ function readSkill() {
 function parseFrontmatter(text) {
   const m = text.match(/^---\n([\s\S]*?)\n---\n/);
   assert.ok(m, 'SKILL.md must start with a YAML frontmatter block');
-  const body = m[1];
-  const name = body.match(/^name:\s*(.+)$/m);
-  // description may be a YAML block scalar (`>-`) spanning indented lines.
-  const desc = body.match(/^description:\s*(>[-+]?|\|[-+]?)?\s*\n?([\s\S]*)$/m);
-  return { name: name && name[1].trim(), descRaw: desc && desc[2] };
+  const lines = m[1].split('\n');
+  const entries = lines
+    .filter((line) => line && !/^\s/.test(line))
+    .map((line) => {
+      const entry = line.match(/^([A-Za-z][\w-]*):\s*(.*)$/);
+      assert.ok(entry, `invalid top-level frontmatter line: ${line}`);
+      return { key: entry[1], value: entry[2] };
+    });
+
+  assert.deepStrictEqual(
+    entries.map(({ key }) => key).sort(),
+    ['description', 'name'],
+    'frontmatter must contain only name and description'
+  );
+
+  const name = entries.find(({ key }) => key === 'name').value.trim();
+  const descriptionIndex = lines.findIndex((line) => /^description:\s*/.test(line));
+  const descriptionHeader = lines[descriptionIndex].replace(/^description:\s*/, '').trim();
+  const descriptionLines = /^(?:>|\|)[-+]?$/.test(descriptionHeader)
+    ? []
+    : [descriptionHeader];
+
+  for (let i = descriptionIndex + 1; i < lines.length && /^\s/.test(lines[i]); i += 1) {
+    descriptionLines.push(lines[i].trim());
+  }
+
+  return { name, description: descriptionLines.join(' ').trim() };
 }
 
 test('SKILL.md exists', () => {
@@ -27,17 +49,9 @@ test('SKILL.md exists', () => {
 
 test('frontmatter has a name and a non-empty description within the 1536-char cap', () => {
   const text = readSkill();
-  const { name, descRaw } = parseFrontmatter(text);
+  const { name, description } = parseFrontmatter(text);
 
   assert.strictEqual(name, 'watchtell', "frontmatter name must be 'watchtell'");
-
-  assert.ok(descRaw, 'frontmatter must have a description');
-  // Collapse the block scalar's indentation + line breaks into the effective text.
-  const description = descRaw
-    .split('\n')
-    .map((l) => l.trim())
-    .join(' ')
-    .trim();
   assert.ok(description.length > 0, 'description must be non-empty');
   assert.ok(
     description.length <= 1536,

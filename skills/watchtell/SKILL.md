@@ -128,8 +128,9 @@ self-contained. Rules:
      `idx`"; "interval must be 600s"). Re-compiling is non-deterministic, so always re-review.
 
 **Mis-compile signals → rm + re-add:** wrong/placeholder URL; empty or wrong field extraction; alarms on
-the first `test`; no state sidecar (would re-alarm every poll); `checker error:` or `timed out` from
-`test`; references a tool that isn't installed; interval wrong in `meta`.
+`add`'s immediate baseline run (the first observation); no state sidecar (would re-alarm every poll);
+`checker error:` or `timed out` from `test`; references a tool that isn't installed; interval wrong in
+`meta`. A later explicit `watchtell test` may legitimately report a transition if the target changed.
 
 ## 5. Keep the daemon alive (the hand-off only works if it polls)
 

@@ -53,6 +53,7 @@ generated checker, and confirm the daemon is polling. The frontmatter is tool-ne
 Install it at the **user level** by symlink (the daemon is user-global, so the skill should be too):
 
 ```sh
+mkdir -p ~/.claude/skills ~/.codex/skills
 # Claude Code
 ln -s "$(pwd)/skills/watchtell" ~/.claude/skills/watchtell
 # codex
@@ -60,8 +61,7 @@ ln -s "$(pwd)/skills/watchtell" ~/.codex/skills/watchtell
 ```
 
 Run these from inside your clone. Because it's a symlink into the clone, a `git pull` keeps the installed
-skill current — no re-install needed. (Copying the folder instead of symlinking also works; it just needs
-re-copying after each upgrade.)
+skill current — no re-install needed.
 
 ## Auto-start at login (launchd)
 
