@@ -14,6 +14,7 @@ const { makeHome, cleanup, FAKE_COMPILER, FIXTURES } = require('./helpers');
 
 const BIN = path.join(__dirname, '..', 'bin', 'watchtell.js');
 const FLAKY_COMPILER = path.join(FIXTURES, 'flaky-timeout-compiler.sh');
+const CONFUSABLE_COMPILER = path.join(FIXTURES, 'confusable-compiler.sh');
 
 // Run body with a fresh counter file and env knobs for the flaky/counting
 // fixtures, restoring the previous env afterwards.
@@ -224,6 +225,85 @@ test('compile fails after 2 attempts when every attempt times out', () => {
   });
 });
 
+// ---- ASCII-confusable lint -------------------------------------------------
+
+test('lintConfusables rejects the real-incident U+FF5C in a jq expression', () => {
+  // The exact broken line from issue #13: fullwidth vertical bar instead of `|`.
+  const script = '#!/usr/bin/env bash\njq -r \'" #" + (.number｜tostring)\'\n';
+  const findings = compile.lintConfusables(script);
+  assert.strictEqual(findings.length, 1);
+  assert.strictEqual(findings[0].line, 2);
+  assert.strictEqual(findings[0].codepoint, 'U+FF5C');
+  assert.strictEqual(findings[0].ascii, '|');
+  assert.strictEqual(findings[0].char, '｜');
+});
+
+test('lintConfusables rejects fullwidth parens/quotes/space, curly quotes, em dash, NBSP', () => {
+  const cases = [
+    ['（', 'U+FF08', '('], // FULLWIDTH LEFT PARENTHESIS
+    ['）', 'U+FF09', ')'], // FULLWIDTH RIGHT PARENTHESIS
+    ['＂', 'U+FF02', '"'], // FULLWIDTH QUOTATION MARK
+    ['＇', 'U+FF07', "'"], // FULLWIDTH APOSTROPHE
+    ['＝', 'U+FF1D', '='], // FULLWIDTH EQUALS SIGN
+    ['　', 'U+3000', ' '], // IDEOGRAPHIC SPACE
+    ['‘', 'U+2018', "'"], // LEFT SINGLE QUOTATION MARK
+    ['’', 'U+2019', "'"], // RIGHT SINGLE QUOTATION MARK
+    ['“', 'U+201C', '"'], // LEFT DOUBLE QUOTATION MARK
+    ['”', 'U+201D', '"'], // RIGHT DOUBLE QUOTATION MARK
+    ['–', 'U+2013', '-'], // EN DASH
+    ['—', 'U+2014', '-'], // EM DASH
+    ['−', 'U+2212', '-'], // MINUS SIGN
+    [' ', 'U+00A0', ' '], // NO-BREAK SPACE
+  ];
+  for (const [ch, cp, ascii] of cases) {
+    const findings = compile.lintConfusables(`#!/bin/bash\necho ${ch}\n`);
+    assert.strictEqual(findings.length, 1, `expected one finding for ${cp}`);
+    assert.strictEqual(findings[0].codepoint, cp);
+    assert.strictEqual(findings[0].ascii, ascii);
+  }
+});
+
+test('lintConfusables ACCEPTS legitimate Korean in grep and printf (real acgcamp shape)', () => {
+  // Modeled on the real acgcamp checker: Korean in a grep pattern and a Korean
+  // alarm message. These MUST pass — the lint is not a non-ASCII ban.
+  const script = [
+    '#!/usr/bin/env bash',
+    'set -u',
+    "if curl -s https://example.invalid | grep -q '권한이 없습니다'; then",
+    "  printf '접근 권한이 없습니다\\n'",
+    'fi',
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(compile.lintConfusables(script), []);
+});
+
+test('formatConfusables names the line number and codepoint', () => {
+  const findings = compile.lintConfusables('#!/bin/bash\njq \'.a｜b\'\n');
+  const msg = compile.formatConfusables(findings);
+  assert.match(msg, /line 2/);
+  assert.match(msg, /U\+FF5C/);
+  assert.match(msg, /resembles ASCII '\|'/);
+});
+
+test('compile retries once then fails when the compiler emits confusables', () => {
+  withFlakyEnv({}, (counter) => {
+    const command = {
+      file: 'sh',
+      args: [
+        '-c',
+        `n=$(cat "$FLAKY_COUNTER" 2>/dev/null || echo 0); echo $((n+1)) > "$FLAKY_COUNTER"; bash ${CONFUSABLE_COMPILER}`,
+      ],
+      label: 'confusable',
+    };
+    assert.throws(
+      () => compile.compile('watch issues', { command, timeoutMs: 5000 }),
+      /ASCII-confusable characters[\s\S]*U\+FF5C/
+    );
+    // Two attempts: initial + one retry, matching the timeout retry budget.
+    assert.strictEqual(fs.readFileSync(counter, 'utf8').trim(), '2');
+  });
+});
+
 test('add (with fixture compiler) compiles, keeps, hash-binds, and runs immediate test', () => {
   const home = makeHome();
   try {
@@ -355,6 +435,27 @@ test('add rejects an invalid --interval before compiling', () => {
     assert.match(r.stderr, /invalid --interval 'abc'/);
     assert.doesNotMatch(r.stderr, /should-not-run/);
     // Nothing was persisted.
+    assert.strictEqual(fs.readdirSync(paths.checkersDir()).length, 0);
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('add fails on a confusable checker without keeping it or binding trust', () => {
+  const home = makeHome();
+  try {
+    const r = spawnSync(process.execPath, [BIN, 'add', 'alert on new issues', '--yes'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        WATCHTELL_HOME: home,
+        WATCHTELL_COMPILER_CMD: `bash ${CONFUSABLE_COMPILER}`,
+      },
+    });
+    assert.strictEqual(r.status, 1, r.stdout);
+    assert.match(r.stderr, /ASCII-confusable characters/);
+    assert.match(r.stderr, /U\+FF5C/);
+    // Nothing persisted: no meta, no script, no trust record.
     assert.strictEqual(fs.readdirSync(paths.checkersDir()).length, 0);
   } finally {
     cleanup(home);
