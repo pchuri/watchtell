@@ -88,6 +88,25 @@ test('parse leaves interval at or above the floor unchanged (no notice)', () => 
   }
 });
 
+test('parseDuration accepts seconds and simple duration forms', () => {
+  assert.strictEqual(compile.parseDuration('600'), 600);
+  assert.strictEqual(compile.parseDuration('5m'), 300);
+  assert.strictEqual(compile.parseDuration('1h'), 3600);
+  assert.strictEqual(compile.parseDuration('90s'), 90);
+  // Below the floor is still a VALID duration — parseDuration does not clamp.
+  assert.strictEqual(compile.parseDuration('30'), 30);
+});
+
+test('parseDuration rejects garbage, zero, and negatives', () => {
+  for (const bad of ['abc', '0', '-5', '', '  ', '5x', '1.5m', '5 m']) {
+    assert.throws(
+      () => compile.parseDuration(bad),
+      compile.CompileError,
+      `expected ${JSON.stringify(bad)} to throw`
+    );
+  }
+});
+
 test('parse throws on a missing block', () => {
   assert.throws(() => compile.parse('no delimiters here'), compile.CompileError);
 });
@@ -227,6 +246,106 @@ test('add (with fixture compiler) compiles, keeps, hash-binds, and runs immediat
     assert.strictEqual(meta.request, 'alert me when the probe trips');
     assert.ok(fs.existsSync(paths.scriptPath(id)));
     assert.ok(trust.verify(id).ok, 'kept checker verifies against its trust record');
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('add --interval wins over the compiler-inferred interval', () => {
+  const home = makeHome();
+  try {
+    const r = spawnSync(
+      process.execPath,
+      [BIN, 'add', 'alert me when the probe trips', '--yes', '--interval', '10m'],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WATCHTELL_HOME: home,
+          WATCHTELL_COMPILER_CMD: `bash ${FAKE_COMPILER}`,
+          FAKE_INTERVAL: '300',
+          FAKE_ROUTE: 'notify',
+        },
+      }
+    );
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /meta: interval=600s/);
+    const dir = paths.checkersDir();
+    const id = fs
+      .readdirSync(dir)
+      .find((f) => f.endsWith('.meta.json'))
+      .slice(0, -'.meta.json'.length);
+    const meta = JSON.parse(fs.readFileSync(paths.metaPath(id), 'utf8'));
+    assert.strictEqual(meta.interval, 600);
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('add --interval below the floor clamps to 60s with a notice', () => {
+  const home = makeHome();
+  try {
+    const r = spawnSync(
+      process.execPath,
+      [BIN, 'add', 'alert me', '--yes', '--interval', '30'],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WATCHTELL_HOME: home,
+          WATCHTELL_COMPILER_CMD: `bash ${FAKE_COMPILER}`,
+          FAKE_INTERVAL: '300',
+        },
+      }
+    );
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /interval 30s is below the 60s minimum; using 60s/);
+    assert.match(r.stdout, /meta: interval=60s/);
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('add without --interval preserves the compiled interval', () => {
+  const home = makeHome();
+  try {
+    const r = spawnSync(process.execPath, [BIN, 'add', 'alert me', '--yes'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        WATCHTELL_HOME: home,
+        WATCHTELL_COMPILER_CMD: `bash ${FAKE_COMPILER}`,
+        FAKE_INTERVAL: '300',
+      },
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /meta: interval=300s/);
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('add rejects an invalid --interval before compiling', () => {
+  const home = makeHome();
+  try {
+    const r = spawnSync(
+      process.execPath,
+      [BIN, 'add', 'alert me', '--yes', '--interval', 'abc'],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WATCHTELL_HOME: home,
+          // A compiler that would fail loudly if invoked — proves fail-fast.
+          WATCHTELL_COMPILER_CMD: 'echo should-not-run >&2; exit 9',
+        },
+      }
+    );
+    assert.strictEqual(r.status, 1);
+    assert.match(r.stderr, /invalid --interval 'abc'/);
+    assert.doesNotMatch(r.stderr, /should-not-run/);
+    // Nothing was persisted.
+    assert.strictEqual(fs.readdirSync(paths.checkersDir()).length, 0);
   } finally {
     cleanup(home);
   }

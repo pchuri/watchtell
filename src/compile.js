@@ -48,6 +48,30 @@ function clampInterval(seconds) {
   return { interval: seconds, notice: null };
 }
 
+// Parse an explicit `--interval` value into whole seconds. Accepts a plain
+// integer (seconds) or a simple duration form with a single unit suffix:
+// `90s`, `5m`, `1h`. Rejects zero, negatives, fractions, and garbage — the
+// caller fails fast before spending an LLM compile. Does NOT apply the floor;
+// clampInterval owns that so there is one floor definition.
+function parseDuration(value) {
+  const raw = String(value == null ? '' : value).trim();
+  const m = raw.match(/^(\d+)(s|m|h)?$/i);
+  if (!m) {
+    throw new CompileError(
+      `invalid --interval '${value}': use seconds (e.g. 600) or a duration (90s, 5m, 1h)`
+    );
+  }
+  const n = parseInt(m[1], 10);
+  const unit = (m[2] || 's').toLowerCase();
+  const seconds = unit === 'h' ? n * 3600 : unit === 'm' ? n * 60 : n;
+  if (!(seconds > 0)) {
+    throw new CompileError(
+      `invalid --interval '${value}': must be a positive duration`
+    );
+  }
+  return seconds;
+}
+
 class CompileError extends Error {}
 
 // Parse the spike's <<<META>>>/<<<SCRIPT>>>/<<<END>>> delimiter format out of
@@ -192,6 +216,7 @@ module.exports = {
   CompileError,
   MIN_INTERVAL_SECONDS,
   clampInterval,
+  parseDuration,
   parse,
   resolveCommand,
   resolveTimeoutMs,

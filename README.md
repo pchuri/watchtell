@@ -34,7 +34,7 @@ Compilation allows 10 minutes per attempt and retries once only when the agent C
 
 | Command | What it does |
 |---|---|
-| `watchtell add "<request>"` | Compile the request at add time, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). |
+| `watchtell add "<request>"` | Compile the request at add time, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). `--interval <duration>` sets the poll interval explicitly (`600`, `90s`, `5m`, `1h`) and overrides the compiler-inferred value. |
 | `watchtell list` | Show checkers: id, request, interval, route, last state, last fired. |
 | `watchtell test <id>` | Force one run now (ignores the schedule) and show the output/transition. Does not send a notification. |
 | `watchtell rm <id>` | Delete a checker and its trust record + state sidecar. |
@@ -130,7 +130,7 @@ The smoke script uses a fixture compiler and a mock notifier because sandboxes/C
 
 ## Poll interval floor
 
-The poll interval is inferred by the compiler from your request. watchtell enforces a **hard 60-second minimum**: a compiled interval below 60s is clamped up to 60s at add time (with a notice on stdout), and the daemon also treats any interval below 60s as 60s at runtime — so a hand-edited `~/.watchtell/checkers/<id>.meta.json` cannot poll faster either. As a best practice, prefer **5 minutes or longer** unless you genuinely need tighter latency.
+By default the poll interval is inferred by the compiler from your request, which is imperfect. Prefer setting it explicitly with **`--interval <duration>`** on `add` (`600`, `90s`, `5m`, `1h`); the flag wins over whatever the compiler inferred and gives a deterministic value with no LLM guesswork. Invalid values (`0`, negatives, garbage) are rejected before compiling. watchtell enforces a **hard 60-second minimum**: an interval below 60s — whether inferred or passed via `--interval` — is clamped up to 60s at add time (with a notice on stdout), and the daemon also treats any interval below 60s as 60s at runtime — so a hand-edited `~/.watchtell/checkers/<id>.meta.json` cannot poll faster either. As a best practice, prefer **5 minutes or longer** unless you genuinely need tighter latency.
 
 ## Limitations (v0.1)
 
