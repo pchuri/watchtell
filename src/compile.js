@@ -31,9 +31,9 @@ The natural-language alarm request:
 // Hard minimum poll interval (seconds). Enforced at registration (clamp, below)
 // and again at runtime in the daemon (defense in depth against hand-edited
 // meta.json). This is the ONE owner of the value — daemon.js imports it here.
-// Clamping (not rejecting) is deliberate: the interval is LLM-inferred, so a
-// mis-inference should not force a whole re-compile. Skill/README guidance still
-// recommends >=5 min as best practice; this is only the abuse floor.
+// Clamping (not rejecting) preserves compiler-inferred interval behavior and
+// gives explicit values below the floor the same effective minimum. Skill/README
+// guidance still recommends >=5 min as best practice; this is only the abuse floor.
 const MIN_INTERVAL_SECONDS = 60;
 
 // Clamp an interval to the floor. Returns the effective interval plus a

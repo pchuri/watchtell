@@ -68,8 +68,8 @@ One consent per alarm. Never register an alarm the user did not ask for. Never b
 ## 3. Write a GOOD alarm request (compile quality lives or dies here)
 
 Compilation is a single LLM pass and is only as good as the request. The most common failure is the
-compiler **guessing the wrong field/param or the wrong interval**. Make the request precise and
-self-contained. Rules:
+compiler **guessing the wrong field/param**; without `--interval`, it can also guess the wrong interval.
+Make the request precise and self-contained. Rules:
 
 1. **One concern per alarm.** One checker = one transition. Split "CI red OR new release" into two `add`s.
 2. **Give the exact, full URL/endpoint**, including query params. Paste it literally.
@@ -120,8 +120,8 @@ self-contained. Rules:
      transition, and stays silent / keeps state on a probe error;
    - it did NOT add `--max-time` / `--retry` / other tool timeout flags, and references only tools that
      are installed.
-   - the `meta` **interval matches** what the user asked for (guaranteed when you passed `--interval`;
-     still worth a glance).
+   - the `meta` **interval matches** the requested duration after applying the 60s floor (deterministic
+     when you passed `--interval`; still worth a glance).
 4. `watchtell test <id>` — expect `silent (no transition)` (first run recorded a baseline) or a sane
    `TRANSITION: …`. Run it again to confirm a steady target stays silent.
 5. **Decide:**
