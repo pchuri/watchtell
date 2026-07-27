@@ -17,7 +17,13 @@ watchtell add "notify me when repo Y publishes a new release"
 - **Node.js >= 20** and **macOS** (notifications use macOS Notification Center).
 - An installed, already-authenticated agent CLI on your `PATH`: **`claude`** (preferred) or **`codex`**. No API keys — watchtell shells out to the CLI you already use. The agent is called **only** at `add` time; the daemon never calls it.
 
-## Install (from source, until the npm release)
+## Install
+
+```sh
+npm install -g watchtell   # puts `watchtell` on your PATH
+```
+
+### From source (for development)
 
 ```sh
 git clone https://github.com/pchuri/watchtell
