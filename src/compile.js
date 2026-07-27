@@ -218,8 +218,8 @@ function which(cmd) {
 // link-list extraction, multi-step transitions, dedupe) can legitimately need
 // ~200-300s of agent reasoning; the old 180s cap killed them mid-thought.
 const DEFAULT_COMPILE_TIMEOUT_MS = 600000;
-// Total attempts on a TIMEOUT (1 initial + 1 retry). Latency is variable, so a
-// fresh call often lands in a faster band; work stays bounded at 2 x timeout.
+// Total attempts for retriable compile failures (1 initial + 1 retry). A fresh
+// call can avoid either transient latency or a model-emitted confusable.
 const MAX_COMPILE_ATTEMPTS = 2;
 
 // Resolve the per-attempt timeout in ms. Precedence: explicit opts.timeoutMs
@@ -250,9 +250,9 @@ function isTimeout(r) {
 }
 
 // Compile a natural-language request into { meta, script, agent } by invoking the
-// agent CLI. The full prompt (fixed contract + request) is fed on stdin. A
-// TIMEOUT (and only a timeout) is retried once — other failures are not
-// transient and surface immediately.
+// agent CLI. The full prompt (fixed contract + request) is fed on stdin.
+// Timeouts and confusable output are retried once; other failures surface
+// immediately.
 function compile(request, opts = {}) {
   const cmd = opts.command || resolveCommand();
   const prompt = COMPILE_PROMPT + request + '\n';

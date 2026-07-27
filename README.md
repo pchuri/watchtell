@@ -34,7 +34,7 @@ npm link            # puts `watchtell` on your PATH
 
 State lives under `~/.watchtell/` (override with `WATCHTELL_HOME`, used by the tests).
 
-Compilation allows 10 minutes per attempt and retries once only when the agent CLI times out. Set `WATCHTELL_COMPILE_TIMEOUT` to a positive whole number of seconds to change the per-attempt limit; invalid values use the default.
+Compilation allows 10 minutes per attempt and makes at most two attempts: if the first times out or its checker fails the confusable-character gate, watchtell retries once; other failures return immediately. Set `WATCHTELL_COMPILE_TIMEOUT` to a positive whole number of seconds to change the per-attempt limit; invalid values use the default.
 
 ## Commands
 
@@ -119,7 +119,7 @@ A generated checker is arbitrary code, so it never runs before you approve it:
 
 - **Keep = hash-bind.** On Keep, watchtell records the SHA-256 of the exact script bytes into a trust record (`<id>.check-trust`).
 - **Refuse on mismatch.** The daemon and `watchtell test` **re-hash the script before every run** and refuse to execute — with a clear message, quarantining nothing silently — if the hash mismatches or the trust record is absent. Editing a checker's bytes after Keep disables it until you re-add it.
-- **Confusable lint before Keep.** Before the Keep prompt, watchtell scans the generated script for ASCII-confusable characters (fullwidth forms, curly quotes, dashes, non-breaking spaces) that LLMs occasionally emit in place of ASCII code — e.g. a fullwidth `｜` for `|` — and rejects it as a compile failure (retried once) so a checker that would silently lose its first alarm never gets kept. Legitimate non-ASCII in match patterns and messages (e.g. Korean text) is untouched.
+- **Confusable lint before Keep.** Before the Keep prompt, watchtell scans the generated script for ASCII-confusable characters (fullwidth forms, curly quotes, dashes, non-breaking spaces) that LLMs occasionally emit in place of ASCII code — e.g. a fullwidth `｜` for `|` — and rejects it as a retriable compile failure within the same two-attempt budget as timeouts, so a checker that would silently lose its first alarm never gets kept. Legitimate non-ASCII in match patterns and messages (e.g. Korean text) is untouched.
 
 ## Notifications
 
