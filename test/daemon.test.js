@@ -176,6 +176,194 @@ test('failed notification dispatch is not recorded as fired', () => {
   }
 });
 
+test('undelivered transition is queued and retried until it succeeds (exactly once)', () => {
+  const home = makeHome();
+  try {
+    const probe = path.join(home, 'probe.txt');
+    const id = createChecker(probeChecker(probe), { interval: 1, request: 'probe trips' });
+    const logs = [];
+    const logFn = (m) => logs.push(m);
+
+    // Baseline: probe absent -> silent.
+    daemon.runDue({ now: 1_000_000, notifyFn: () => ({ ok: true, route: 'notify' }), logFn });
+
+    // First dispatch fails, every later one succeeds.
+    let calls = 0;
+    const notifyFn = () => (++calls, { ok: calls > 1, route: 'notify' });
+
+    fs.writeFileSync(probe, 'ALARM\n');
+    let res = daemon.runDue({ now: 1_070_000, notifyFn, logFn }).find((r) => r.id === id);
+    assert.strictEqual(res.fired, false, 'first dispatch failed -> not fired');
+    assert.ok(store.readRuntime(id).pending, 'owed alarm queued after failure');
+    assert.strictEqual(store.readRuntime(id).lastFiredAt, null);
+    assert.ok(logs.some((l) => /^NOTIFY-FAILED .* \(attempt 1\/5\)/.test(l)), 'failure logged');
+
+    // Next tick: not due (interval floored to 60s), but the queued alarm is retried.
+    res = daemon.runDue({ now: 1_075_000, notifyFn, logFn }).find((r) => r.id === id);
+    assert.strictEqual(res.fired, true, 'retry delivered the owed alarm');
+    assert.match(res.output, /entered ALARM/);
+    assert.strictEqual(calls, 2, 'delivered exactly once (one fail + one success)');
+    assert.ok(!store.readRuntime(id).pending, 'pending cleared after delivery');
+    assert.ok(store.readRuntime(id).lastFiredAt, 'lastFiredAt recorded');
+    assert.strictEqual(logs.filter((l) => l.startsWith('FIRED')).length, 1, 'fired logged once');
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('a persistently undeliverable alarm is bounded then given up (logged)', () => {
+  const home = makeHome();
+  try {
+    const probe = path.join(home, 'probe.txt');
+    const id = createChecker(probeChecker(probe), { interval: 1, request: 'probe trips' });
+    const logs = [];
+    const logFn = (m) => logs.push(m);
+
+    daemon.runDue({ now: 1_000_000, notifyFn: () => ({ ok: true }), logFn }); // baseline
+
+    let calls = 0;
+    const notifyFn = () => (++calls, { ok: false, route: 'notify' });
+
+    fs.writeFileSync(probe, 'ALARM\n');
+    let now = 1_070_000;
+    daemon.runDue({ now, notifyFn, logFn }); // attempt 1 (fires transition, fails)
+    for (let i = 0; i < 4; i++) {
+      now += 5_000;
+      daemon.runDue({ now, notifyFn, logFn }); // retries -> attempts 2..5
+    }
+
+    assert.strictEqual(calls, 5, 'bounded at MAX_DELIVERY_ATTEMPTS dispatch attempts');
+    assert.ok(!store.readRuntime(id).pending, 'pending cleared after give-up');
+    assert.match(store.readRuntime(id).lastError, /after 5 attempts/);
+    assert.ok(logs.some((l) => /^NOTIFY-GIVEUP .* after 5 attempts/.test(l)), 'give-up logged');
+
+    // No further dispatch attempts once given up (checker not yet due again).
+    now += 5_000;
+    daemon.runDue({ now, notifyFn, logFn });
+    assert.strictEqual(calls, 5, 'no retries after give-up');
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('a newer transition supersedes an older undelivered alarm (newest wins)', () => {
+  const home = makeHome();
+  try {
+    const probe = path.join(home, 'probe.txt');
+    const id = createChecker(probeChecker(probe), { interval: 1, request: 'probe trips' });
+    const logs = [];
+    const logFn = (m) => logs.push(m);
+
+    // Only the ALARM alarm fails to deliver; the recovery delivers fine.
+    const delivered = [];
+    const notifyFn = (route, title, message) => {
+      if (/ALARM/.test(message)) return { ok: false, route: 'notify' };
+      delivered.push(message);
+      return { ok: true, route: 'notify' };
+    };
+
+    daemon.runDue({ now: 1_000_000, notifyFn, logFn }); // baseline (ok)
+
+    fs.writeFileSync(probe, 'ALARM\n');
+    daemon.runDue({ now: 1_070_000, notifyFn, logFn }); // transition -> ALARM, dispatch fails
+    assert.ok(store.readRuntime(id).pending, 'ALARM alarm queued');
+
+    fs.rmSync(probe); // condition recovers before the queued alarm ever delivers
+    const res = daemon.runDue({ now: 1_140_000, notifyFn, logFn }).find((r) => r.id === id);
+
+    assert.deepStrictEqual(delivered, ['probe recovered'], 'newest transition delivered');
+    assert.strictEqual(res.fired, true);
+    assert.ok(!store.readRuntime(id).pending, 'stale ALARM alarm dropped, not re-fired');
+    assert.ok(logs.some((l) => /^NOTIFY-SUPERSEDED/.test(l)), 'supersede logged');
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('a pending alarm retries with unreadable metadata', () => {
+  const home = makeHome();
+  try {
+    const id = createChecker('#!/usr/bin/env bash\nexit 0\n', { request: 'original request' });
+    store.writeRuntime(id, {
+      lastRunAt: 1_000_000,
+      lastFiredAt: null,
+      lastState: null,
+      lastOutput: 'owed alarm',
+      pending: {
+        output: 'owed alarm',
+        route: 'notify',
+        request: 'original request',
+        attempts: 1,
+        queuedAt: 1_000_000,
+      },
+    });
+    fs.writeFileSync(paths.metaPath(id), '{invalid json\n');
+    const deliveries = [];
+
+    const result = daemon.runDue({
+      now: 1_005_000,
+      notifyFn: (...args) => (deliveries.push(args), { ok: true, route: 'notify' }),
+    }).find((entry) => entry.id === id);
+
+    assert.strictEqual(result.fired, true);
+    assert.strictEqual(result.retried, true);
+    assert.deepStrictEqual(deliveries, [['notify', 'watchtell: original request', 'owed alarm']]);
+    assert.ok(!store.readRuntime(id).pending);
+  } finally {
+    cleanup(home);
+  }
+});
+
+test('a pending alarm retries when a due checker refuses or errors', () => {
+  const scenarios = [
+    {
+      script: '#!/usr/bin/env bash\nexit 0\n',
+      mutate: (id) => fs.appendFileSync(paths.scriptPath(id), '# tampered\n'),
+      assertFailure: (result) => assert.strictEqual(result.refused, true),
+    },
+    {
+      script: '#!/usr/bin/env bash\nexit 1\n',
+      mutate: () => {},
+      assertFailure: (result) => assert.match(result.error, /status 1/),
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const home = makeHome();
+    try {
+      const id = createChecker(scenario.script, { request: 'original request' });
+      store.writeRuntime(id, {
+        lastRunAt: null,
+        lastFiredAt: null,
+        lastState: null,
+        lastOutput: 'owed alarm',
+        pending: {
+          output: 'owed alarm',
+          route: 'notify',
+          request: 'original request',
+          attempts: 1,
+          queuedAt: 1_000_000,
+        },
+      });
+      scenario.mutate(id);
+      let deliveries = 0;
+
+      const result = daemon.runDue({
+        now: 1_005_000,
+        notifyFn: () => (deliveries++, { ok: true, route: 'notify' }),
+      }).find((entry) => entry.id === id);
+
+      scenario.assertFailure(result);
+      assert.strictEqual(result.fired, true);
+      assert.strictEqual(result.retried, true);
+      assert.strictEqual(deliveries, 1);
+      assert.ok(!store.readRuntime(id).pending);
+    } finally {
+      cleanup(home);
+    }
+  }
+});
+
 test('detached start confirms ownership and stop waits for exit', () => {
   const home = makeHome();
   try {

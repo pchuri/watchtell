@@ -14,6 +14,13 @@ const START_TIMEOUT_MS = 5000;
 const STOP_TIMEOUT_MS = run.HARD_TIMEOUT_MS + 5000;
 const KILL_TIMEOUT_MS = 5000;
 
+// A transition whose notification could not be delivered is queued on the
+// checker's runtime record and retried on every subsequent tick, up to this many
+// total attempts (the first dispatch is attempt 1). After the bound is reached the
+// alarm is given up on and logged, so it is neither silently lost nor retried
+// forever.
+const MAX_DELIVERY_ATTEMPTS = 5;
+
 // A checker is due when it has never run, or its interval has elapsed since the
 // last run. interval comes from compile-time meta (seconds).
 function isDue(runtime, meta, now) {
@@ -36,9 +43,54 @@ function readState(id) {
   }
 }
 
-// Run every DUE checker once. Transition dedupe lives inside each checker (its
-// state sidecar); the daemon just relays a non-empty line to the notifier and
-// records last-fired. Trust is re-verified per run inside runChecker.
+// Attempt to deliver one alarm line, mutating `updated` in place and logging the
+// outcome. A checker fires on a state TRANSITION that the checker records into its
+// own sidecar *before* the daemon runs — so if we simply dropped a failed dispatch
+// the transition would already be consumed and the alarm lost silently. Instead,
+// on failure we persist the owed alarm to `updated.pending` and retry it on later
+// ticks, up to MAX_DELIVERY_ATTEMPTS, then give up loudly.
+//
+// `attempts` is the count of prior (failed) attempts for this alarm; `queuedAt` is
+// when it was first owed. Returns the result entry for runDue's list.
+function attemptDelivery({ id, output, route, request, attempts, queuedAt, now, notifyFn, logFn, updated }) {
+  const attempt = attempts + 1;
+  const disp = notifyFn(route, `watchtell: ${request}`, output);
+  updated.lastOutput = output;
+
+  if (disp && disp.ok) {
+    delete updated.pending;
+    updated.lastError = null;
+    updated.lastFiredAt = now;
+    logFn(`FIRED ${id} [${disp && disp.route}]: ${output}`);
+    return { id, fired: true, output, dispatch: disp };
+  }
+
+  logFn(`NOTIFY-FAILED ${id} (attempt ${attempt}/${MAX_DELIVERY_ATTEMPTS}): ${output}`);
+  if (attempt >= MAX_DELIVERY_ATTEMPTS) {
+    delete updated.pending;
+    updated.lastError = `notification dispatch failed after ${attempt} attempts`;
+    logFn(`NOTIFY-GIVEUP ${id} after ${attempt} attempts: ${output}`);
+    return { id, fired: false, output, dispatch: disp, gaveUp: true };
+  }
+  // Preserve the owed alarm for the next tick.
+  updated.pending = { output, route, request, attempts: attempt, queuedAt };
+  updated.lastError = 'notification dispatch failed';
+  return { id, fired: false, output, dispatch: disp };
+}
+
+// Run every DUE checker once, and on every tick retry any alarm still owed from a
+// prior failed dispatch. Transition dedupe lives inside each checker (its state
+// sidecar); the daemon relays a non-empty line to the notifier and records
+// last-fired. Trust is re-verified per run inside runChecker.
+//
+// Ordering / dedupe contract:
+//   - A fresh transition this tick SUPERSEDES any queued-but-undelivered alarm
+//     (newest wins): the current state is the truth, and delivering a stale alarm
+//     plus a fresh one would be noise. The queued alarm is dropped (logged) and the
+//     new one gets a fresh attempt budget.
+//   - Otherwise a queued alarm is retried this tick even if the checker is not due,
+//     so transient notifier failures clear quickly without waiting a full interval.
+//   - A successful delivery clears `pending`, so an alarm is delivered exactly once.
 //
 // Pure enough to unit-test: pass `now` and an optional `notifyFn`/`logFn`.
 function runDue(opts = {}) {
@@ -48,57 +100,88 @@ function runDue(opts = {}) {
   const results = [];
 
   for (const id of store.listIds()) {
+    const runtime = store.readRuntime(id);
     let meta;
     try {
       meta = store.readMeta(id);
     } catch {
-      continue;
-    }
-    const runtime = store.readRuntime(id);
-    if (!isDue(runtime, meta, now)) continue;
-
-    const res = run.runChecker(id);
-    const updated = { ...runtime, lastRunAt: now };
-
-    if (res.refused) {
-      updated.lastError = res.reason;
+      if (!runtime.pending) continue;
+      const updated = { ...runtime };
+      const p = updated.pending;
+      const r = attemptDelivery({
+        id, output: p.output, route: p.route, request: p.request,
+        attempts: p.attempts, queuedAt: p.queuedAt, now, notifyFn, logFn, updated,
+      });
       store.writeRuntime(id, updated);
-      logFn(`REFUSED ${id}: ${res.reason}`);
-      results.push({ id, refused: true, reason: res.reason });
+      results.push({ ...r, retried: true });
       continue;
     }
+    const due = isDue(runtime, meta, now);
+    // Nothing to do: not due and no alarm owed.
+    if (!due && !runtime.pending) continue;
 
-    updated.lastState = readState(id);
+    const updated = { ...runtime };
+    let res = null;
+    let checkerFailure = null;
+    if (due) {
+      res = run.runChecker(id);
+      updated.lastRunAt = now;
 
-    if (res.error) {
-      updated.lastError = res.error;
-      store.writeRuntime(id, updated);
-      logFn(`ERROR ${id}: ${res.error}`);
-      results.push({ id, fired: false, timedOut: res.timedOut, error: res.error });
-      continue;
-    }
+      if (res.refused) {
+        updated.lastError = res.reason;
+        logFn(`REFUSED ${id}: ${res.reason}`);
+        checkerFailure = { id, refused: true, reason: res.reason };
+      } else {
+        updated.lastState = readState(id);
 
-    if (res.output) {
-      const disp = notifyFn(meta.route, `watchtell: ${meta.request}`, res.output);
-      updated.lastOutput = res.output;
-      if (!disp || !disp.ok) {
-        updated.lastError = 'notification dispatch failed';
-        store.writeRuntime(id, updated);
-        logFn(`NOTIFY FAILED ${id}: ${res.output}`);
-        results.push({ id, fired: false, output: res.output, dispatch: disp });
-        continue;
+        if (res.error) {
+          updated.lastError = res.error;
+          logFn(`ERROR ${id}: ${res.error}`);
+          checkerFailure = { id, fired: false, timedOut: res.timedOut, error: res.error };
+        }
       }
-      updated.lastError = null;
-      updated.lastFiredAt = now;
-      store.writeRuntime(id, updated);
-      logFn(`FIRED ${id} [${disp && disp.route}]: ${res.output}`);
-      results.push({ id, fired: true, output: res.output, dispatch: disp });
-    } else {
-      updated.lastError = null;
-      store.writeRuntime(id, updated);
-      if (res.timedOut) logFn(`TIMEOUT ${id}`);
-      results.push({ id, fired: false, timedOut: res.timedOut });
     }
+
+    if (res && !res.refused && !res.error && res.output) {
+      // Fresh transition supersedes any queued alarm (newest wins).
+      if (updated.pending) {
+        logFn(`NOTIFY-SUPERSEDED ${id}: newer transition replaces queued alarm`);
+      }
+      const r = attemptDelivery({
+        id, output: res.output, route: meta.route, request: meta.request,
+        attempts: 0, queuedAt: now, now, notifyFn, logFn, updated,
+      });
+      store.writeRuntime(id, updated);
+      results.push(r);
+      continue;
+    }
+
+    if (updated.pending) {
+      // No fresh transition, but an alarm is still owed: retry it this tick.
+      const p = updated.pending;
+      const r = attemptDelivery({
+        id, output: p.output, route: p.route, request: p.request,
+        attempts: p.attempts, queuedAt: p.queuedAt, now, notifyFn, logFn, updated,
+      });
+      if (r.fired && checkerFailure) {
+        updated.lastError = checkerFailure.reason || checkerFailure.error;
+      }
+      store.writeRuntime(id, updated);
+      results.push({ ...(checkerFailure || {}), ...r, retried: true });
+      continue;
+    }
+
+    if (checkerFailure) {
+      store.writeRuntime(id, updated);
+      results.push(checkerFailure);
+      continue;
+    }
+
+    // Ran, produced no transition, nothing owed: silence.
+    updated.lastError = null;
+    store.writeRuntime(id, updated);
+    if (res.timedOut) logFn(`TIMEOUT ${id}`);
+    results.push({ id, fired: false, timedOut: res.timedOut });
   }
   return results;
 }

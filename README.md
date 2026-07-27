@@ -104,7 +104,7 @@ Every generated checker is deterministic bash that:
 4. **Never alarms on the first run** — the first observation just records a baseline.
 5. **Is timely and fail-safe** — the runtime enforces a hard **30s** timeout, so generated checkers do not add tool-specific timeout or retry flags; a probe error (network down, missing tool, unparseable output) is *not* an alarm unless the request is specifically about that failure.
 
-Transition dedupe lives inside the checker; the daemon just relays a non-empty line to the notification route.
+Transition detection and dedupe live inside the checker; the daemon handles delivery as described in [Delivery reliability](#delivery-reliability).
 
 ## The trust model
 
@@ -131,6 +131,12 @@ The smoke script uses a fixture compiler and a mock notifier because sandboxes/C
 ## Poll interval floor
 
 By default the poll interval is inferred by the compiler from your request, which is imperfect. Prefer setting it explicitly with **`--interval <duration>`** on `add` (`600`, `90s`, `5m`, `1h`); the flag wins over whatever the compiler inferred and gives a deterministic value with no LLM guesswork. Invalid values (`0`, negatives, garbage) are rejected before compiling. watchtell enforces a **hard 60-second minimum**: an interval below 60s — whether inferred or passed via `--interval` — is clamped up to 60s at add time (with a notice on stdout), and the daemon also treats any interval below 60s as 60s at runtime — so a hand-edited `~/.watchtell/checkers/<id>.meta.json` cannot poll faster either. As a best practice, prefer **5 minutes or longer** unless you genuinely need tighter latency.
+
+## Delivery reliability
+
+A checker records its state transition into its own sidecar *during* the run, before the daemon dispatches the notification — so a failed dispatch must not be dropped, or the transition would already be consumed and the alarm lost silently. When a dispatch fails, watchtell **queues the owed alarm** on the checker's runtime record and **retries it on every subsequent tick**, up to 5 total attempts, then gives up. Each failure logs `NOTIFY-FAILED <id> (attempt X/5)` and the give-up logs `NOTIFY-GIVEUP <id> after 5 attempts` to `daemon.log`; a successful delivery clears the queue so an alarm is delivered **exactly once**. If a *newer* transition occurs while an older alarm is still undelivered, the newest wins — the stale alarm is dropped (`NOTIFY-SUPERSEDED <id>`) because the current state is the truth and delivering both would be noise. Retries respect silence-by-default: they only ever redeliver the one alarm already owed.
+
+Running `watchtell test` manually advances the checker's state sidecar out of band but does not clear a queued pending alarm. The daemon intentionally delivers that genuinely owed alarm on its next tick.
 
 ## Limitations (v0.1)
 
