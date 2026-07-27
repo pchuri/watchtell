@@ -31,9 +31,9 @@ The natural-language alarm request:
 // Hard minimum poll interval (seconds). Enforced at registration (clamp, below)
 // and again at runtime in the daemon (defense in depth against hand-edited
 // meta.json). This is the ONE owner of the value — daemon.js imports it here.
-// Clamping (not rejecting) is deliberate: the interval is LLM-inferred, so a
-// mis-inference should not force a whole re-compile. Skill/README guidance still
-// recommends >=5 min as best practice; this is only the abuse floor.
+// Clamping (not rejecting) preserves compiler-inferred interval behavior and
+// gives explicit values below the floor the same effective minimum. Skill/README
+// guidance still recommends >=5 min as best practice; this is only the abuse floor.
 const MIN_INTERVAL_SECONDS = 60;
 
 // Clamp an interval to the floor. Returns the effective interval plus a
@@ -46,6 +46,30 @@ function clampInterval(seconds) {
     };
   }
   return { interval: seconds, notice: null };
+}
+
+// Parse an explicit `--interval` value into whole seconds. Accepts a plain
+// integer (seconds) or a simple duration form with a single unit suffix:
+// `90s`, `5m`, `1h`. Rejects zero, negatives, fractions, and garbage — the
+// caller fails fast before spending an LLM compile. Does NOT apply the floor;
+// clampInterval owns that so there is one floor definition.
+function parseDuration(value) {
+  const raw = String(value == null ? '' : value).trim();
+  const m = raw.match(/^(\d+)(s|m|h)?$/i);
+  if (!m) {
+    throw new CompileError(
+      `invalid --interval '${value}': use seconds (e.g. 600) or a duration (90s, 5m, 1h)`
+    );
+  }
+  const n = parseInt(m[1], 10);
+  const unit = (m[2] || 's').toLowerCase();
+  const seconds = unit === 'h' ? n * 3600 : unit === 'm' ? n * 60 : n;
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) {
+    throw new CompileError(
+      `invalid --interval '${value}': must be a positive duration`
+    );
+  }
+  return seconds;
 }
 
 class CompileError extends Error {}
@@ -192,6 +216,7 @@ module.exports = {
   CompileError,
   MIN_INTERVAL_SECONDS,
   clampInterval,
+  parseDuration,
   parse,
   resolveCommand,
   resolveTimeoutMs,

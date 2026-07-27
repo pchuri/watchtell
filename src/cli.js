@@ -40,6 +40,17 @@ async function cmdAdd(request, options) {
   request = String(request || '').trim();
   if (!request) return fail('add requires a natural-language request');
 
+  // Parse an explicit --interval BEFORE compiling so an invalid value fails
+  // fast without spending an LLM compile.
+  let forcedInterval = null;
+  if (options.interval != null) {
+    try {
+      forcedInterval = compile.parseDuration(options.interval);
+    } catch (e) {
+      return fail(e.message);
+    }
+  }
+
   let compiled;
   try {
     compiled = compile.compile(request);
@@ -48,6 +59,14 @@ async function cmdAdd(request, options) {
   }
 
   const { meta, script } = compiled;
+
+  // An explicit --interval WINS over whatever the compiler inferred; reuse the
+  // single 60s floor owner so the flag value is clamped like any other.
+  if (forcedInterval != null) {
+    const floored = compile.clampInterval(forcedInterval);
+    meta.interval = floored.interval;
+    compiled.intervalNotice = floored.notice;
+  }
   process.stdout.write(`\nCompiled by ${compiled.agent}. Generated checker:\n\n`);
   process.stdout.write(script.replace(/^/gm, '  '));
   if (compiled.intervalNotice) {
@@ -378,6 +397,11 @@ function buildProgram() {
     .command('add')
     .argument('<request>', 'natural-language alarm request')
     .option('--yes', 'keep without interactive review (trusts the generator)')
+    .option(
+      '--interval <duration>',
+      'set the poll interval explicitly (e.g. 600, 90s, 5m, 1h); ' +
+        'overrides the compiler-inferred value'
+    )
     .description(
       'compile a request into a checker, review it, keep + hash-bind it ' +
         '(poll interval is clamped to a 60s minimum; >=5 min recommended)'

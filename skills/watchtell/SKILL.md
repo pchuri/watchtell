@@ -28,7 +28,7 @@ one-off check you can do right now (just do the check).
 
 | Command | Use |
 |---|---|
-| `watchtell add "<request>" --yes` | Compile the request, print the generated checker + meta, keep it, hash-bind it, run one immediate (silent, no-notification) test. `--yes` skips the interactive keep prompt — required for non-interactive agent use. |
+| `watchtell add "<request>" --yes` | Compile the request, print the generated checker + meta, keep it, hash-bind it, run one immediate (silent, no-notification) test. `--yes` skips the interactive keep prompt — required for non-interactive agent use. Add `--interval <duration>` (`600`, `90s`, `5m`, `1h`) to set the poll interval deterministically — it overrides the compiler-inferred value; **prefer this over relying on inference**. |
 | `watchtell list` | Show every checker: id, request, interval, route, last state, last fired. |
 | `watchtell test <id>` | Run one checker now (ignores schedule), print its result. Sends NO notification. |
 | `watchtell rm <id>` | Delete a checker + its trust record + state. |
@@ -68,8 +68,8 @@ One consent per alarm. Never register an alarm the user did not ask for. Never b
 ## 3. Write a GOOD alarm request (compile quality lives or dies here)
 
 Compilation is a single LLM pass and is only as good as the request. The most common failure is the
-compiler **guessing the wrong field/param or the wrong interval**. Make the request precise and
-self-contained. Rules:
+compiler **guessing the wrong field/param**; without `--interval`, it can also guess the wrong interval.
+Make the request precise and self-contained. Rules:
 
 1. **One concern per alarm.** One checker = one transition. Split "CI red OR new release" into two `add`s.
 2. **Give the exact, full URL/endpoint**, including query params. Paste it literally.
@@ -87,8 +87,10 @@ self-contained. Rules:
    say "public API, no auth" so the compiler doesn't add auth it doesn't need.
 7. **Put the URL you want to OPEN into the alarm message.** If `terminal-notifier` is installed the first
    URL in the message becomes click-to-open, so add: "include <URL> in the alert so I can click through".
-8. **State the interval in plain words** ("every 5 minutes") — then VERIFY it landed (see §4); interval
-   inference is imperfect.
+8. **Set the interval explicitly with `--interval`** (`--interval 5m`, `600`, `90s`, `1h`) — it overrides
+   the compiler and is deterministic, killing the mis-inference error class. Prefer it over stating the
+   interval only in words. If you do leave it to inference, state it in plain words ("every 5 minutes")
+   and VERIFY it landed (see §4). The 60s floor still applies to the flag value.
 9. **Don't ask for timeouts/retries/"keep trying for N seconds".** The runtime enforces a hard 30s
    timeout and the checker must be a single quick probe. Requesting tool flags reintroduces a bug the
    project already fixed.
@@ -107,8 +109,9 @@ self-contained. Rules:
 ## 4. Register + verify (do all of this before saying "it's live")
 
 1. Get consent (§2) and draft a good request (§3).
-2. `watchtell add "<request>" --yes` — the command prints the **full generated bash** and a
-   `meta: interval=<N>s route=<r>` line, keeps it, and runs one immediate silent test.
+2. `watchtell add "<request>" --yes --interval <duration>` — pass `--interval` (e.g. `--interval 10m`) so
+   the poll interval is deterministic instead of inferred. The command prints the **full generated bash**
+   and a `meta: interval=<N>s route=<r>` line, keeps it, and runs one immediate silent test.
 3. **Review the printed script** (it's in the command's stdout — read it there; do NOT open or edit the
    files under `~/.watchtell/checkers/`). Confirm:
    - it fetches the **right URL**, with the auth you intended;
@@ -117,7 +120,8 @@ self-contained. Rules:
      transition, and stays silent / keeps state on a probe error;
    - it did NOT add `--max-time` / `--retry` / other tool timeout flags, and references only tools that
      are installed.
-   - the `meta` **interval matches** what the user asked for.
+   - the `meta` **interval matches** the requested duration after applying the 60s floor (deterministic
+     when you passed `--interval`; still worth a glance).
 4. `watchtell test <id>` — expect `silent (no transition)` (first run recorded a baseline) or a sane
    `TRANSITION: …`. Run it again to confirm a steady target stays silent.
 5. **Decide:**
@@ -125,7 +129,8 @@ self-contained. Rules:
      is polling (§5). Report what the alarm message will look like.
    - **Bad** → `watchtell rm <id>`, then re-`add` with a **sharper hint** targeting the exact defect
      (e.g. "the version is at JSON path `.version`, not `.dist-tags.latest`"; "extract `numberKey`, not
-     `idx`"; "interval must be 600s"). Re-compiling is non-deterministic, so always re-review.
+     `idx`") — and pass `--interval` to fix any interval mistake outright rather than re-hinting it.
+     Re-compiling is non-deterministic, so always re-review.
 
 **Mis-compile signals → rm + re-add:** wrong/placeholder URL; empty or wrong field extraction; alarms on
 `add`'s immediate baseline run (the first observation); no state sidecar (would re-alarm every poll);
