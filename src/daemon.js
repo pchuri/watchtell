@@ -100,43 +100,49 @@ function runDue(opts = {}) {
   const results = [];
 
   for (const id of store.listIds()) {
+    const runtime = store.readRuntime(id);
     let meta;
     try {
       meta = store.readMeta(id);
     } catch {
+      if (!runtime.pending) continue;
+      const updated = { ...runtime };
+      const p = updated.pending;
+      const r = attemptDelivery({
+        id, output: p.output, route: p.route, request: p.request,
+        attempts: p.attempts, queuedAt: p.queuedAt, now, notifyFn, logFn, updated,
+      });
+      store.writeRuntime(id, updated);
+      results.push({ ...r, retried: true });
       continue;
     }
-    const runtime = store.readRuntime(id);
     const due = isDue(runtime, meta, now);
     // Nothing to do: not due and no alarm owed.
     if (!due && !runtime.pending) continue;
 
     const updated = { ...runtime };
     let res = null;
+    let checkerFailure = null;
     if (due) {
       res = run.runChecker(id);
       updated.lastRunAt = now;
 
       if (res.refused) {
         updated.lastError = res.reason;
-        store.writeRuntime(id, updated);
         logFn(`REFUSED ${id}: ${res.reason}`);
-        results.push({ id, refused: true, reason: res.reason });
-        continue;
-      }
+        checkerFailure = { id, refused: true, reason: res.reason };
+      } else {
+        updated.lastState = readState(id);
 
-      updated.lastState = readState(id);
-
-      if (res.error) {
-        updated.lastError = res.error;
-        store.writeRuntime(id, updated);
-        logFn(`ERROR ${id}: ${res.error}`);
-        results.push({ id, fired: false, timedOut: res.timedOut, error: res.error });
-        continue;
+        if (res.error) {
+          updated.lastError = res.error;
+          logFn(`ERROR ${id}: ${res.error}`);
+          checkerFailure = { id, fired: false, timedOut: res.timedOut, error: res.error };
+        }
       }
     }
 
-    if (res && res.output) {
+    if (res && !res.refused && !res.error && res.output) {
       // Fresh transition supersedes any queued alarm (newest wins).
       if (updated.pending) {
         logFn(`NOTIFY-SUPERSEDED ${id}: newer transition replaces queued alarm`);
@@ -157,8 +163,17 @@ function runDue(opts = {}) {
         id, output: p.output, route: p.route, request: p.request,
         attempts: p.attempts, queuedAt: p.queuedAt, now, notifyFn, logFn, updated,
       });
+      if (r.fired && checkerFailure) {
+        updated.lastError = checkerFailure.reason || checkerFailure.error;
+      }
       store.writeRuntime(id, updated);
-      results.push({ ...r, retried: true });
+      results.push({ ...(checkerFailure || {}), ...r, retried: true });
+      continue;
+    }
+
+    if (checkerFailure) {
+      store.writeRuntime(id, updated);
+      results.push(checkerFailure);
       continue;
     }
 
