@@ -78,6 +78,36 @@ function attemptDelivery({ id, output, route, request, attempts, queuedAt, now, 
   return { id, fired: false, output, dispatch: disp };
 }
 
+// Persist a checker's runtime, but never resurrect a removed checker. `rm` writes a
+// tombstone before deleting the sidecars, so we re-check it immediately before AND
+// after the write: if the id was removed, drop the (possibly just-written) files and
+// reap the tombstone instead. This closes the rm-vs-running-checker race — whichever
+// of rm and the daemon acts last, the id converges to fully gone. Returns false when
+// the write was suppressed because the checker had been removed.
+function commitRuntime(id, updated) {
+  if (store.isRemoved(id)) {
+    store.finalizeRemoval(id);
+    return false;
+  }
+  store.writeRuntime(id, updated);
+  if (store.isRemoved(id)) {
+    store.finalizeRemoval(id);
+    return false;
+  }
+  return true;
+}
+
+// Reap tombstones left by `rm`, cleaning up anything a still-running checker or an
+// overlapping tick revived. Logs a single line per id only when files actually had
+// to be reclaimed, so a plain rm produces no spam.
+function sweepRemoved(logFn) {
+  for (const id of store.listTombstones()) {
+    if (store.finalizeRemoval(id)) {
+      logFn(`REMOVED ${id}: reclaimed files after rm`);
+    }
+  }
+}
+
 // Run every DUE checker once, and on every tick retry any alarm still owed from a
 // prior failed dispatch. Transition dedupe lives inside each checker (its state
 // sidecar); the daemon relays a non-empty line to the notifier and records
@@ -99,7 +129,17 @@ function runDue(opts = {}) {
   const logFn = opts.logFn || (() => {});
   const results = [];
 
+  // Reap any checker `rm` removed before we touch live checkers this tick.
+  sweepRemoved(logFn);
+
   for (const id of store.listIds()) {
+    // rm may have tombstoned this id after listIds snapshotted it. Don't run or
+    // rewrite a removed checker; reap it and move on (no REFUSED/ERROR spam).
+    if (store.isRemoved(id)) {
+      store.finalizeRemoval(id);
+      results.push({ id, removed: true });
+      continue;
+    }
     const runtime = store.readRuntime(id);
     let meta;
     try {
@@ -112,7 +152,10 @@ function runDue(opts = {}) {
         id, output: p.output, route: p.route, request: p.request,
         attempts: p.attempts, queuedAt: p.queuedAt, now, notifyFn, logFn, updated,
       });
-      store.writeRuntime(id, updated);
+      if (!commitRuntime(id, updated)) {
+        results.push({ id, removed: true });
+        continue;
+      }
       results.push({ ...r, retried: true });
       continue;
     }
@@ -126,6 +169,15 @@ function runDue(opts = {}) {
     if (due) {
       res = run.runChecker(id);
       updated.lastRunAt = now;
+
+      // rm may have removed the checker while it ran, so runChecker refuses on the
+      // now-missing script. That's the race, not a fault: reap it silently instead
+      // of logging a bogus REFUSED/ERROR for a checker the user deleted.
+      if (store.isRemoved(id)) {
+        store.finalizeRemoval(id);
+        results.push({ id, removed: true });
+        continue;
+      }
 
       if (res.refused) {
         updated.lastError = res.reason;
@@ -151,7 +203,10 @@ function runDue(opts = {}) {
         id, output: res.output, route: meta.route, request: meta.request,
         attempts: 0, queuedAt: now, now, notifyFn, logFn, updated,
       });
-      store.writeRuntime(id, updated);
+      if (!commitRuntime(id, updated)) {
+        results.push({ id, removed: true });
+        continue;
+      }
       results.push(r);
       continue;
     }
@@ -166,20 +221,29 @@ function runDue(opts = {}) {
       if (r.fired && checkerFailure) {
         updated.lastError = checkerFailure.reason || checkerFailure.error;
       }
-      store.writeRuntime(id, updated);
+      if (!commitRuntime(id, updated)) {
+        results.push({ id, removed: true });
+        continue;
+      }
       results.push({ ...(checkerFailure || {}), ...r, retried: true });
       continue;
     }
 
     if (checkerFailure) {
-      store.writeRuntime(id, updated);
+      if (!commitRuntime(id, updated)) {
+        results.push({ id, removed: true });
+        continue;
+      }
       results.push(checkerFailure);
       continue;
     }
 
     // Ran, produced no transition, nothing owed: silence.
     updated.lastError = null;
-    store.writeRuntime(id, updated);
+    if (!commitRuntime(id, updated)) {
+      results.push({ id, removed: true });
+      continue;
+    }
     if (res.timedOut) logFn(`TIMEOUT ${id}`);
     results.push({ id, fired: false, timedOut: res.timedOut });
   }

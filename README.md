@@ -138,6 +138,10 @@ A checker records its state transition into its own sidecar *during* the run, be
 
 Running `watchtell test` manually advances the checker's state sidecar out of band but does not clear a queued pending alarm. The daemon intentionally delivers that genuinely owed alarm on its next tick.
 
+## Removing a checker safely
+
+`watchtell rm <id>` is safe even while the daemon is mid-run on that same checker. `rm` writes a `<id>.removed` **tombstone** before it deletes the sidecars, and the daemon checks that tombstone around checker runs and runtime-record writes. It also sweeps tombstoned state sidecars and runtime records, including queued pending alarms, before processing live checkers. A removed checker therefore converges to fully gone, with no orphan retries or removal-related error spam; reclaiming files may produce at most one `REMOVED <id>` log line. `rm` never depends on the daemon running; with the daemon stopped the tombstone simply lingers, invisibly, until the daemon next reaps it.
+
 ## Limitations (v0.1)
 
 If the daemon does not exit within the stop grace period, `watchtell daemon stop` escalates to `SIGKILL`, which can orphan an in-flight checker and remove its runtime timeout supervisor. Fully reaping an in-flight checker on forced stop is deferred to v0.2.

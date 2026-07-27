@@ -50,6 +50,13 @@ function runtimePath(id) {
   return checkerPath(id, '.runtime.json');
 }
 
+// Tombstone marker written by `rm` before it deletes a checker's sidecars. It
+// outlives the delete so a daemon tick that overlaps the rm cannot resurrect any
+// file for the id; the daemon reaps the tombstone once nothing is left to revive.
+function tombstonePath(id) {
+  return checkerPath(id, '.removed');
+}
+
 function pidPath() {
   return path.join(home(), 'daemon.pid');
 }
@@ -67,6 +74,7 @@ module.exports = {
   metaPath,
   statePath,
   runtimePath,
+  tombstonePath,
   pidPath,
   logPath,
 };
