@@ -97,8 +97,18 @@ test('parseDuration accepts seconds and simple duration forms', () => {
   assert.strictEqual(compile.parseDuration('30'), 30);
 });
 
-test('parseDuration rejects garbage, zero, and negatives', () => {
-  for (const bad of ['abc', '0', '-5', '', '  ', '5x', '1.5m', '5 m']) {
+test('parseDuration rejects invalid and unsafe durations', () => {
+  for (const bad of [
+    'abc',
+    '0',
+    '-5',
+    '',
+    '  ',
+    '5x',
+    '1.5m',
+    '5 m',
+    '9'.repeat(400),
+  ]) {
     assert.throws(
       () => compile.parseDuration(bad),
       compile.CompileError,

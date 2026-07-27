@@ -64,7 +64,7 @@ function parseDuration(value) {
   const n = parseInt(m[1], 10);
   const unit = (m[2] || 's').toLowerCase();
   const seconds = unit === 'h' ? n * 3600 : unit === 'm' ? n * 60 : n;
-  if (!(seconds > 0)) {
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) {
     throw new CompileError(
       `invalid --interval '${value}': must be a positive duration`
     );
