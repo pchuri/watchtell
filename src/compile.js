@@ -74,6 +74,86 @@ function parseDuration(value) {
 
 class CompileError extends Error {}
 
+// ---- ASCII-confusable lint -------------------------------------------------
+//
+// LLMs recurrently emit fullwidth/lookalike Unicode where ASCII code was meant
+// (real incident: `.number｜tostring` with U+FF5C FULLWIDTH VERTICAL LINE instead
+// of `|`). Such a checker passes the add-time immediate test — which only records
+// the baseline — then silently loses its first real alarm when the confusable
+// breaks jq/grep/etc. and the surrounding `2>/dev/null` guard swallows the error
+// after the state sidecar already advanced. We gate at add time BEFORE keep/hash-bind.
+//
+// This is deliberately NOT a blanket non-ASCII ban: legitimate checkers carry
+// non-ASCII in grep patterns and notification strings (e.g. Korean `권한이 없습니다`).
+// We reject only a small, explicit list of characters that have NO legitimate use
+// even inside a message string — a Korean message uses Korean, never a fullwidth
+// ASCII lookalike — so a simple whole-file scan is safe and sufficient.
+
+// Explicit lookalikes beyond the fullwidth block. Keep this small and commented,
+// not a full Unicode-confusables database.
+const CONFUSABLE_EXTRAS = new Map([
+  [0x2018, "'"], // LEFT SINGLE QUOTATION MARK
+  [0x2019, "'"], // RIGHT SINGLE QUOTATION MARK
+  [0x201c, '"'], // LEFT DOUBLE QUOTATION MARK
+  [0x201d, '"'], // RIGHT DOUBLE QUOTATION MARK
+  [0x2013, '-'], // EN DASH
+  [0x2014, '-'], // EM DASH
+  [0x2212, '-'], // MINUS SIGN
+  [0x00a0, ' '], // NO-BREAK SPACE
+  [0x3000, ' '], // IDEOGRAPHIC (fullwidth) SPACE
+]);
+
+// Resolve the ASCII a code point resembles, or null if it is not a confusable we
+// reject. Fullwidth forms U+FF01–U+FF5E map to their ASCII counterpart via the
+// fixed 0xFEE0 offset (U+FF5C -> U+007C `|`); the extras table covers the rest.
+function confusableAscii(cp) {
+  if (cp >= 0xff01 && cp <= 0xff5e) return String.fromCharCode(cp - 0xfee0);
+  return CONFUSABLE_EXTRAS.has(cp) ? CONFUSABLE_EXTRAS.get(cp) : null;
+}
+
+function hexCodepoint(cp) {
+  return 'U+' + cp.toString(16).toUpperCase().padStart(4, '0');
+}
+
+// Scan a checker script for ASCII-confusable characters. Returns an array of
+// findings { line, column, char, codepoint, ascii } (empty when clean). Column
+// is a 1-based code-point index within the line.
+function lintConfusables(script) {
+  const findings = [];
+  const lines = String(script).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const chars = Array.from(lines[i]); // code-point aware
+    for (let c = 0; c < chars.length; c++) {
+      const cp = chars[c].codePointAt(0);
+      const ascii = confusableAscii(cp);
+      if (ascii != null) {
+        findings.push({
+          line: i + 1,
+          column: c + 1,
+          char: chars[c],
+          codepoint: hexCodepoint(cp),
+          ascii,
+        });
+      }
+    }
+  }
+  return findings;
+}
+
+// Format lint findings into a clear, multi-line failure message naming each
+// offending line, character, code point, and the ASCII it resembles.
+function formatConfusables(findings) {
+  const lines = [
+    'generated checker contains ASCII-confusable characters (likely a broken checker):',
+  ];
+  for (const f of findings) {
+    lines.push(
+      `  line ${f.line} col ${f.column}: '${f.char}' (${f.codepoint}) resembles ASCII '${f.ascii}'`
+    );
+  }
+  return lines.join('\n');
+}
+
 // Parse the spike's <<<META>>>/<<<SCRIPT>>>/<<<END>>> delimiter format out of
 // the raw agent output. Tolerant of leading/trailing noise around the block.
 function parse(raw) {
@@ -207,6 +287,20 @@ function compile(request, opts = {}) {
       );
     }
     const parsed = parse(r.stdout);
+    // ASCII-confusable gate: a checker with fullwidth/lookalike characters would
+    // ship and then silently lose its first real alarm. Treat it like a timeout —
+    // one retry (a fresh compile often avoids the glitch), then fail clearly.
+    const findings = lintConfusables(parsed.script);
+    if (findings.length > 0) {
+      const message = formatConfusables(findings);
+      if (attempt < MAX_COMPILE_ATTEMPTS) {
+        process.stderr.write(
+          `compile produced confusable characters, retrying (${attempt + 1}/${MAX_COMPILE_ATTEMPTS})...\n`
+        );
+        continue;
+      }
+      throw new CompileError(message);
+    }
     return { ...parsed, agent: cmd.label, raw: r.stdout };
   }
 }
@@ -218,6 +312,8 @@ module.exports = {
   clampInterval,
   parseDuration,
   parse,
+  lintConfusables,
+  formatConfusables,
   resolveCommand,
   resolveTimeoutMs,
   compile,

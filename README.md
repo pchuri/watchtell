@@ -119,6 +119,7 @@ A generated checker is arbitrary code, so it never runs before you approve it:
 
 - **Keep = hash-bind.** On Keep, watchtell records the SHA-256 of the exact script bytes into a trust record (`<id>.check-trust`).
 - **Refuse on mismatch.** The daemon and `watchtell test` **re-hash the script before every run** and refuse to execute — with a clear message, quarantining nothing silently — if the hash mismatches or the trust record is absent. Editing a checker's bytes after Keep disables it until you re-add it.
+- **Confusable lint before Keep.** Before the Keep prompt, watchtell scans the generated script for ASCII-confusable characters (fullwidth forms, curly quotes, dashes, non-breaking spaces) that LLMs occasionally emit in place of ASCII code — e.g. a fullwidth `｜` for `|` — and rejects it as a compile failure (retried once) so a checker that would silently lose its first alarm never gets kept. Legitimate non-ASCII in match patterns and messages (e.g. Korean text) is untouched.
 
 ## Notifications
 
