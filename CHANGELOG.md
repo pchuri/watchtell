@@ -1,3 +1,11 @@
+## [1.0.1](https://github.com/pchuri/watchtell/compare/v1.0.0...v1.0.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **cli:** fold multi-line state before truncating in list table ([#17](https://github.com/pchuri/watchtell/issues/17)) ([6bd38dc](https://github.com/pchuri/watchtell/commit/6bd38dcc163f991dece91281a59d57058ffe4d12)), closes [#15](https://github.com/pchuri/watchtell/issues/15)
+* reject ASCII-confusable characters in generated checkers ([#16](https://github.com/pchuri/watchtell/issues/16)) ([7ccc3df](https://github.com/pchuri/watchtell/commit/7ccc3df94c9130a657fbc8af97d79e5f07adf243)), closes [#13](https://github.com/pchuri/watchtell/issues/13)
+
 # 1.0.0 (2026-07-27)
 
 
