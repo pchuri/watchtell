@@ -104,7 +104,7 @@ Every generated checker is deterministic bash that:
 4. **Never alarms on the first run** — the first observation just records a baseline.
 5. **Is timely and fail-safe** — the runtime enforces a hard **30s** timeout, so generated checkers do not add tool-specific timeout or retry flags; a probe error (network down, missing tool, unparseable output) is *not* an alarm unless the request is specifically about that failure.
 
-Transition dedupe lives inside the checker; the daemon just relays a non-empty line to the notification route.
+Transition detection and dedupe live inside the checker; the daemon handles delivery as described in [Delivery reliability](#delivery-reliability).
 
 ## The trust model
 
