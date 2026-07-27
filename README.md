@@ -17,7 +17,13 @@ watchtell add "notify me when repo Y publishes a new release"
 - **Node.js >= 20** and **macOS** (notifications use macOS Notification Center).
 - An installed, already-authenticated agent CLI on your `PATH`: **`claude`** (preferred) or **`codex`**. No API keys — watchtell shells out to the CLI you already use. The agent is called **only** at `add` time; the daemon never calls it.
 
-## Install (from source, until the npm release)
+## Install
+
+```sh
+npm install -g watchtell   # puts `watchtell` on your PATH
+```
+
+### From source (for development)
 
 ```sh
 git clone https://github.com/pchuri/watchtell
@@ -41,7 +47,7 @@ Compilation allows 10 minutes per attempt and retries once only when the agent C
 | `watchtell daemon start [--detach]` | Run the internal-loop scheduler (foreground by default; `--detach` backgrounds it). |
 | `watchtell daemon stop` / `status` | Stop the daemon / report running / not running / stale-pid. |
 | `watchtell daemon install` / `uninstall` | Install/remove the launchd auto-start agent (macOS only) so the daemon resumes at the next login after a reboot or logout. |
-| `watchtell skill install` / `uninstall` / `status` | Symlink this clone's coding-agent skill into user-level skill dirs (`~/.claude/skills`, `~/.codex/skills`); `--claude` / `--codex` limit targets. See [Coding-agent skill](#coding-agent-skill). |
+| `watchtell skill install` / `uninstall` / `status` | Symlink watchtell's bundled coding-agent skill into user-level skill dirs (`~/.claude/skills`, `~/.codex/skills`); `--claude` / `--codex` limit targets. See [Coding-agent skill](#coding-agent-skill). |
 
 ## Coding-agent skill
 
@@ -58,18 +64,19 @@ Install it at the **user level** (the daemon is user-global, so the skill should
 watchtell skill install              # symlink into ~/.claude/skills and ~/.codex/skills (both agents)
 watchtell skill install --claude     # or limit to one agent (--claude / --codex)
 watchtell skill status               # show each target: installed -> where it points, or not installed
-watchtell skill uninstall            # remove only symlinks that point at this clone (idempotent)
+watchtell skill uninstall            # remove only symlinks that point at this installation (idempotent)
 watchtell skill uninstall --force    # remove any symlink at the selected watchtell target
 ```
 
-`skill install` resolves the skill dir inside **this clone** from `watchtell`'s installed location,
-not the current directory, then symlinks it into each agent's user-level `skills/` directory. It creates
+`skill install` resolves the bundled skill from `watchtell`'s installed location, not the current
+directory, then symlinks it into each agent's user-level `skills/` directory. It creates
 `~/.claude/skills/` / `~/.codex/skills/` as needed. It never overwrites a real file/dir or a foreign
 symlink already at the target — it reports that target as SKIPPED and tells you how to replace it
 manually. `skill uninstall` also never removes a real file/dir, including with `--force`. Because the
-installed skill is a symlink into the clone, a `git pull` keeps it current — no re-install needed.
+installed skill is a symlink into the watchtell installation, updating watchtell keeps it current — no
+skill re-install needed.
 
-Manual fallback (equivalent to the commands `skill install` prints): run these from inside your clone.
+Manual fallback for a source install: run these from inside your clone.
 
 ```sh
 mkdir -p ~/.claude/skills ~/.codex/skills
@@ -115,7 +122,7 @@ A generated checker is arbitrary code, so it never runs before you approve it:
 
 ## Notifications
 
-v0.1 has one route: **`notify`** = macOS Notification Center. A checker may compile with a different `route=` (e.g. `slack`); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. The Slack webhook plugin is v0.2.
+watchtell currently has one route: **`notify`** = macOS Notification Center. A checker may compile with a different `route=` (e.g. `slack`); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. Slack webhook delivery is not implemented.
 
 **Clickable notifications (optional).** If [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) is available on `PATH` (`brew install terminal-notifier`), watchtell delivers through it so clicking a notification opens the first URL found in the alarm message. Without it, watchtell falls back to `osascript` (notifications still show, just aren't clickable) — no new hard dependency.
 
@@ -142,8 +149,6 @@ Running `watchtell test` manually advances the checker's state sidecar out of ba
 
 `watchtell rm <id>` is safe even while the daemon is mid-run on that same checker. `rm` writes a `<id>.removed` **tombstone** before it deletes the sidecars, and the daemon checks that tombstone around checker runs and runtime-record writes. It also sweeps tombstoned state sidecars and runtime records, including queued pending alarms, before processing live checkers. A removed checker therefore converges to fully gone, with no orphan retries or removal-related error spam; reclaiming files may produce at most one `REMOVED <id>` log line. `rm` never depends on the daemon running; with the daemon stopped the tombstone simply lingers, invisibly, until the daemon next reaps it.
 
-## Limitations (v0.1)
+## Limitations
 
-If the daemon does not exit within the stop grace period, `watchtell daemon stop` escalates to `SIGKILL`, which can orphan an in-flight checker and remove its runtime timeout supervisor. Fully reaping an in-flight checker on forced stop is deferred to v0.2.
-
-> Work in progress — not yet released. Slack routing is planned for v0.2.
+If the daemon does not exit within the stop grace period, `watchtell daemon stop` escalates to `SIGKILL`, which can orphan an in-flight checker and remove its runtime timeout supervisor. Fully reaping an in-flight checker on forced stop is not yet implemented.

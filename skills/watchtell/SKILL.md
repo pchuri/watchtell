@@ -41,8 +41,9 @@ one-off check you can do right now (just do the check).
 Run these first and act on the result (do not assume anything is installed or running):
 
 1. **watchtell installed?** `command -v watchtell`. If missing, tell the user it is not installed and give
-   the install steps (from source until the npm release): `git clone https://github.com/pchuri/watchtell
-   && cd watchtell && npm install && npm link`. Do not proceed until it's on PATH.
+   the install step: `npm install -g watchtell`. (From source, for development: `git clone
+   https://github.com/pchuri/watchtell && cd watchtell && npm install && npm link`.) Do not proceed until
+   it's on PATH.
 2. **A compile CLI available?** `command -v claude || command -v codex`. `watchtell add` shells out to one
    of these to compile the request (no API key — it uses the CLI you're already logged into). If neither
    is on PATH, tell the user; `add` cannot compile without one.

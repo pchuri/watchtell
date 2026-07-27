@@ -305,7 +305,9 @@ function skillInstallSummary(results, source) {
   );
   const lines = [''];
   if (sourceIsInstalled) {
-    lines.push(`Symlinked from ${source}. A 'git pull' in this clone keeps the skill current.`);
+    lines.push(
+      `Symlinked from ${source}. Re-run 'watchtell skill install' after upgrading watchtell.`
+    );
   }
   lines.push('Manual fallback:');
   for (const result of results) {
@@ -439,7 +441,9 @@ function buildProgram() {
     .option('--claude', 'limit to Claude Code (~/.claude/skills/watchtell)')
     .option('--codex', 'limit to codex (~/.codex/skills/watchtell)')
     .option('--force', 'uninstall: remove any watchtell symlink, not only ours')
-    .description('symlink this clone\'s coding-agent skill into user-level skill dirs (default: all agents)')
+    .description(
+      "symlink watchtell's bundled coding-agent skill into user-level skill dirs (default: all agents)"
+    )
     .action(cmdSkill);
 
   return program;

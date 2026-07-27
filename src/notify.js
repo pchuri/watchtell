@@ -5,9 +5,8 @@ const store = require('./store');
 
 // Dispatch a notification for a checker's transition line.
 //
-// v0.1 supports exactly one route: `notify` = macOS Notification Center. Any
-// other route (e.g. `slack`) was accepted at compile time but is relayed
-// through `notify` here (the Slack webhook plugin is v0.2).
+// The only supported route is `notify` = macOS Notification Center. Any other
+// route (e.g. `slack`) accepted at compile time is relayed through `notify` here.
 //
 // Delivery preference (highest first):
 //   1. WATCHTELL_NOTIFY_CMD override (tests/mocks): run via `sh -c` with
