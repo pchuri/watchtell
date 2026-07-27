@@ -164,7 +164,7 @@ function cmdList() {
       request: truncate(meta.request, 40),
       interval: `${meta.interval}s`,
       route: meta.route,
-      state: rt.lastState ? truncate(rt.lastState, 16) : '-',
+      state: rt.lastState ? truncate(rt.lastState, 16) || '-' : '-',
       fired: rt.lastFiredAt ? new Date(rt.lastFiredAt).toISOString() : '-',
     };
   });
@@ -187,8 +187,14 @@ function cmdList() {
   }
 }
 
+// Collapse every whitespace run (newlines, tabs, CR included) into a single
+// space and trim, so a multi-line state sidecar can never shatter the table.
+function oneLine(s) {
+  return String(s).replace(/\s+/g, ' ').trim();
+}
+
 function truncate(s, n) {
-  s = String(s);
+  s = oneLine(s);
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
@@ -464,4 +470,6 @@ module.exports = {
   cmdDaemon,
   cmdSkill,
   skillInstallSummary,
+  truncate,
+  oneLine,
 };
