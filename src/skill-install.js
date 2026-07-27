@@ -1,14 +1,14 @@
 'use strict';
 
-// Install the repo's coding-agent skill (skills/watchtell) into the user-level
-// skill directories of supported agents by SYMLINK, so a `git pull` in the clone
-// keeps the installed skill current. The core is pure and takes explicit
-// homeDir/source paths so tests exercise it against a temp dir, never real ~/.
+// Install watchtell's bundled coding-agent skill (skills/watchtell) into the
+// user-level skill directories of supported agents by symlink. The core is pure
+// and takes explicit homeDir/source paths so tests exercise it against a temp
+// dir, never real ~/.
 //
 // Never overwrite: a real file/dir or a foreign symlink at the target is reported
 // as skipped with a manual-fix hint. Uninstall removes only a symlink that points
-// at this clone (or, with force, any watchtell symlink there); it never deletes a
-// real directory.
+// at this installation (or, with force, any watchtell symlink there); it never
+// deletes a real directory.
 
 const fs = require('fs');
 const path = require('path');
@@ -21,8 +21,8 @@ const AGENTS = [
   { key: 'codex', label: 'codex', subdir: ['.codex', 'skills', 'watchtell'] },
 ];
 
-// Absolute path to the skill directory inside THIS clone, resolved from the
-// running script's location (not cwd) so the symlink source is stable.
+// Absolute path to the bundled skill, resolved from the running script's
+// location (not cwd) so the symlink source is stable.
 function skillSourceDir() {
   return path.resolve(__dirname, '..', 'skills', 'watchtell');
 }
