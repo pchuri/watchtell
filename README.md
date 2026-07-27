@@ -140,7 +140,7 @@ Running `watchtell test` manually advances the checker's state sidecar out of ba
 
 ## Removing a checker safely
 
-`watchtell rm <id>` is safe even while the daemon is mid-run on that same checker. `rm` writes a `<id>.removed` **tombstone** before it deletes the sidecars, and the daemon re-checks that tombstone around every run and before/after every write: any file a still-running checker or an overlapping tick tries to resurrect (state sidecar, runtime record, or a queued pending alarm) is discarded, and the tombstone is reaped once nothing is left. So a removed checker converges to fully gone — no orphaned files, no retries for a deleted alarm, and no error spam (a reclaimed file logs a single `REMOVED <id>` line). `rm` never depends on the daemon running; with the daemon stopped the tombstone simply lingers, invisibly, until the daemon next reaps it.
+`watchtell rm <id>` is safe even while the daemon is mid-run on that same checker. `rm` writes a `<id>.removed` **tombstone** before it deletes the sidecars, and the daemon checks that tombstone around checker runs and runtime-record writes. It also sweeps tombstoned state sidecars and runtime records, including queued pending alarms, before processing live checkers. A removed checker therefore converges to fully gone, with no orphan retries or removal-related error spam; reclaiming files may produce at most one `REMOVED <id>` log line. `rm` never depends on the daemon running; with the daemon stopped the tombstone simply lingers, invisibly, until the daemon next reaps it.
 
 ## Limitations (v0.1)
 
