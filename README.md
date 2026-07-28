@@ -14,7 +14,7 @@ watchtell add "notify me when repo Y publishes a new release"
 
 ## Requirements
 
-- **Node.js >= 20** and **macOS** (notifications use macOS Notification Center).
+- **Node.js >= 20** and **macOS** (local notifications use Notification Center; auto-start uses launchd).
 - An installed, already-authenticated agent CLI on your `PATH`: **`claude`** (preferred) or **`codex`**. No API keys — watchtell shells out to the CLI you already use. The agent is called **only** at `add` time; the daemon never calls it.
 
 ## Install
@@ -40,9 +40,9 @@ Compilation allows 10 minutes per attempt and makes at most two attempts: if the
 
 | Command | What it does |
 |---|---|
-| `watchtell add "<request>"` | Compile the request at add time, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). `--interval <duration>` sets the poll interval explicitly (`600`, `90s`, `5m`, `1h`) and overrides the compiler-inferred value. |
+| `watchtell add "<request>"` | Compile the request at add time, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). `--interval <duration>` sets the poll interval explicitly (`600`, `90s`, `5m`, `1h`) and overrides the compiler-inferred value. `--webhook <url>` delivers fired alarms by POSTing JSON to an http(s) URL instead of local Notification Center (see [Notifications](#notifications)). |
 | `watchtell list` | Show checkers: id, request, interval, route, last state, last fired. |
-| `watchtell test <id>` | Force one run now (ignores the schedule) and show the output/transition. Does not send a notification. |
+| `watchtell test <id>` | Force one run now (ignores the schedule) and show the output/transition. Does not deliver locally or by webhook. |
 | `watchtell rm <id>` | Delete a checker and its trust record + state sidecar. |
 | `watchtell daemon start [--detach]` | Run the internal-loop scheduler (foreground by default; `--detach` backgrounds it). |
 | `watchtell daemon stop` / `status` | Stop the daemon / report running / not running / stale-pid. |
@@ -123,9 +123,42 @@ A generated checker is arbitrary code, so it never runs before you approve it:
 
 ## Notifications
 
-watchtell currently has one route: **`notify`** = macOS Notification Center. A checker may compile with a different `route=` (e.g. `slack`); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. Slack webhook delivery is not implemented.
+watchtell has two delivery routes:
+
+- **`notify`** (default) = macOS Notification Center.
+- **`webhook`** = POST the fired alarm as JSON to a URL you supply with `--webhook`.
+
+A checker may still *compile* with some other `route=` the generator invents (including `webhook` without a URL); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. Webhook delivery is activated **only** by the explicit `--webhook` flag — the compiler never infers a webhook URL.
 
 **Clickable notifications (optional).** If [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) is available on `PATH` (`brew install terminal-notifier`), watchtell delivers through it so clicking a notification opens the first URL found in the alarm message. Without it, watchtell falls back to `osascript` (notifications still show, just aren't clickable) — no new hard dependency.
+
+### Webhook delivery
+
+`watchtell add "<request>" --webhook <url>` sets `route=webhook` and stores the URL in the checker's meta. When the checker fires, watchtell POSTs `Content-Type: application/json` with this minimal, stable payload:
+
+```json
+{
+  "id": "a1b2c3",
+  "request": "notify me when CI goes red",
+  "message": "CI entered failing state",
+  "firedAt": "2026-07-28T12:34:56.000Z"
+}
+```
+
+- `id` — the checker id. `request` — your original natural-language request. `message` — the single alarm line the checker emitted. `firedAt` — ISO 8601 timestamp of the transition.
+- The URL must be `http`/`https`, must not contain embedded username/password credentials, and is validated at add time. Non-2xx responses, transport errors, redirects, and timeouts all count as a **failed dispatch**, so the same [delivery-reliability queue](#delivery-reliability) applies: up to 5 total attempts, newest-wins supersede, then give up (logged).
+- Each POST times out after 10 seconds. Set `WATCHTELL_WEBHOOK_TIMEOUT_MS` to a positive whole number of milliseconds, up to 300000, to change the limit; invalid values use the default.
+- On a failed webhook dispatch watchtell also attempts a **local** Notification Center note (`webhook delivery failed for <id>`) so a broken URL has a best-effort local signal.
+- **Secret hygiene.** Webhook URLs can embed a secret in their path. watchtell **never logs or prints the full URL** — `add` shows only scheme+host, while `watchtell list` and `daemon.log` omit the URL. The URL is stored with user-only permissions in `~/.watchtell/checkers/<id>.meta.json`; don't share it.
+
+**Slack relay example.** The webhook route targets endpoints that accept arbitrary JSON. Raw Slack incoming-webhook URLs require a `text` field and raw Discord incoming-webhook URLs require `content`, so both reject watchtell's generic schema. Point watchtell at a small user-run relay that reshapes the payload for those services:
+
+```sh
+watchtell add "notify me when my service health endpoint starts 5xx-ing" \
+  --webhook "https://alerts.example.net/watchtell/slack"
+```
+
+Arbitrary-JSON endpoints can receive the payload directly; service-specific destinations can sit behind a relay. Per-service formatting, custom headers/auth, and payload templating are out of scope for v1.
 
 ## Development
 
@@ -142,7 +175,7 @@ By default the poll interval is inferred by the compiler from your request, whic
 
 ## Delivery reliability
 
-A checker records its state transition into its own sidecar *during* the run, before the daemon dispatches the notification — so a failed dispatch must not be dropped, or the transition would already be consumed and the alarm lost silently. When a dispatch fails, watchtell **queues the owed alarm** on the checker's runtime record and **retries it on every subsequent tick**, up to 5 total attempts, then gives up. Each failure logs `NOTIFY-FAILED <id> (attempt X/5)` and the give-up logs `NOTIFY-GIVEUP <id> after 5 attempts` to `daemon.log`; a successful delivery clears the queue so an alarm is delivered **exactly once**. If a *newer* transition occurs while an older alarm is still undelivered, the newest wins — the stale alarm is dropped (`NOTIFY-SUPERSEDED <id>`) because the current state is the truth and delivering both would be noise. Retries respect silence-by-default: they only ever redeliver the one alarm already owed.
+A checker records its state transition into its own sidecar *during* the run, before the daemon dispatches the alarm — so a failed delivery must not be dropped, or the transition would already be consumed and the alarm lost silently. When delivery fails, watchtell **queues the owed alarm** on the checker's runtime record and **retries it on every subsequent tick**, up to 5 total attempts, then gives up. Each failure logs `NOTIFY-FAILED <id> (attempt X/5)` and the give-up logs `NOTIFY-GIVEUP <id> after 5 attempts` to `daemon.log`; a successful delivery clears the queue. If a *newer* transition occurs while an older alarm is still undelivered, the newest wins — the stale alarm is dropped (`NOTIFY-SUPERSEDED <id>`) because the current state is the truth and delivering both would be noise. Retries respect silence-by-default: they only ever redeliver the one alarm already owed. Webhook retries keep `id` and `firedAt` stable so receivers can deduplicate them; a receiver that processes a request but loses its response may see the POST again.
 
 Running `watchtell test` manually advances the checker's state sidecar out of band but does not clear a queued pending alarm. The daemon intentionally delivers that genuinely owed alarm on its next tick.
 

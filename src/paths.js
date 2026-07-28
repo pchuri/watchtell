@@ -34,7 +34,7 @@ function trustPath(id) {
   return checkerPath(id, '.check-trust');
 }
 
-// Compile-time metadata: request text, interval, route, createdAt.
+// Add-time metadata: id, request, interval, route, optional webhook URL, agent, createdAt.
 function metaPath(id) {
   return checkerPath(id, '.meta.json');
 }
@@ -44,7 +44,7 @@ function statePath(id) {
   return checkerPath(id, '.state');
 }
 
-// Daemon-written runtime record: last run, state, output, error, notification time,
+// Daemon-written runtime record: last run, state, output, error, delivery time,
 // and any alarm awaiting delivery.
 function runtimePath(id) {
   return checkerPath(id, '.runtime.json');

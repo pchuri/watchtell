@@ -14,7 +14,7 @@ const START_TIMEOUT_MS = 5000;
 const STOP_TIMEOUT_MS = run.HARD_TIMEOUT_MS + 5000;
 const KILL_TIMEOUT_MS = 5000;
 
-// A transition whose notification could not be delivered is queued on the
+// A transition whose alarm could not be delivered is queued on the
 // checker's runtime record and retried on every subsequent tick, up to this many
 // total attempts (the first dispatch is attempt 1). After the bound is reached the
 // alarm is given up on and logged, so it is neither silently lost nor retried
@@ -52,9 +52,12 @@ function readState(id) {
 //
 // `attempts` is the count of prior (failed) attempts for this alarm; `queuedAt` is
 // when it was first owed. Returns the result entry for runDue's list.
-function attemptDelivery({ id, output, route, request, attempts, queuedAt, now, notifyFn, logFn, updated }) {
+function attemptDelivery({ id, output, route, request, webhookUrl, attempts, queuedAt, now, notifyFn, logFn, updated }) {
   const attempt = attempts + 1;
-  const disp = notifyFn(route, `watchtell: ${request}`, output);
+  // firedAt is the transition time (when the alarm was first owed), kept stable
+  // across retries by deriving it from queuedAt rather than the dispatch time.
+  const firedAt = new Date(queuedAt).toISOString();
+  const disp = notifyFn(route, `watchtell: ${request}`, output, { id, request, webhookUrl, firedAt });
   updated.lastOutput = output;
 
   if (disp && disp.ok) {
@@ -73,7 +76,7 @@ function attemptDelivery({ id, output, route, request, attempts, queuedAt, now, 
     return { id, fired: false, output, dispatch: disp, gaveUp: true };
   }
   // Preserve the owed alarm for the next tick.
-  updated.pending = { output, route, request, attempts: attempt, queuedAt };
+  updated.pending = { output, route, request, webhookUrl, attempts: attempt, queuedAt };
   updated.lastError = 'notification dispatch failed';
   return { id, fired: false, output, dispatch: disp };
 }
@@ -120,7 +123,9 @@ function sweepRemoved(logFn) {
 //     new one gets a fresh attempt budget.
 //   - Otherwise a queued alarm is retried this tick even if the checker is not due,
 //     so transient notifier failures clear quickly without waiting a full interval.
-//   - A successful delivery clears `pending`, so an alarm is delivered exactly once.
+//   - A successful dispatch clears `pending`, so the daemon does not dispatch that
+//     alarm again. Webhook receivers may still observe a duplicate after an
+//     ambiguous failure and can deduplicate with the stable id/firedAt pair.
 //
 // Pure enough to unit-test: pass `now` and an optional `notifyFn`/`logFn`.
 function runDue(opts = {}) {
@@ -149,7 +154,7 @@ function runDue(opts = {}) {
       const updated = { ...runtime };
       const p = updated.pending;
       const r = attemptDelivery({
-        id, output: p.output, route: p.route, request: p.request,
+        id, output: p.output, route: p.route, request: p.request, webhookUrl: p.webhookUrl,
         attempts: p.attempts, queuedAt: p.queuedAt, now, notifyFn, logFn, updated,
       });
       if (!commitRuntime(id, updated)) {
@@ -200,7 +205,7 @@ function runDue(opts = {}) {
         logFn(`NOTIFY-SUPERSEDED ${id}: newer transition replaces queued alarm`);
       }
       const r = attemptDelivery({
-        id, output: res.output, route: meta.route, request: meta.request,
+        id, output: res.output, route: meta.route, request: meta.request, webhookUrl: meta.webhookUrl,
         attempts: 0, queuedAt: now, now, notifyFn, logFn, updated,
       });
       if (!commitRuntime(id, updated)) {
@@ -215,7 +220,7 @@ function runDue(opts = {}) {
       // No fresh transition, but an alarm is still owed: retry it this tick.
       const p = updated.pending;
       const r = attemptDelivery({
-        id, output: p.output, route: p.route, request: p.request,
+        id, output: p.output, route: p.route, request: p.request, webhookUrl: p.webhookUrl,
         attempts: p.attempts, queuedAt: p.queuedAt, now, notifyFn, logFn, updated,
       });
       if (r.fired && checkerFailure) {

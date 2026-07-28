@@ -6,19 +6,21 @@ description: >-
   coding session ends — e.g. "tell me when this CI goes red", "alert me when this dependency publishes a
   new release", "notify me when this endpoint starts 5xx-ing", "ping me when this board gets a new post".
   watchtell compiles the request into a deterministic bash checker ONCE (via the local claude/codex CLI),
-  then a local daemon polls it LLM-free and fires a macOS notification only on state TRANSITIONS. Use for
-  developer-owned checks on a Mac: HTTP health, JSON thresholds, release tags, exchange rates, new list
-  items, process/port liveness, file/command output. NOT a general web-scraping monitor, NOT for
-  sub-minute polling, NOT for team/headless/remote/CI use.
+  then a local daemon polls it LLM-free and delivers through macOS Notification Center or an explicit
+  generic-JSON webhook only on state TRANSITIONS. Use for developer-owned checks on a Mac: HTTP health,
+  JSON thresholds, release tags, exchange rates, new list items, process/port liveness, file/command
+  output. NOT a general web-scraping monitor, NOT for sub-minute polling, NOT a hosted monitoring service.
 ---
 
 # watchtell — hand off a watch to the daemon
 
 watchtell lets you register "alarm on X" in plain language. Your local `claude`/`codex` CLI compiles the
 request into a deterministic bash **checker** once, at registration. A local daemon then polls that
-checker with **zero runtime LLM cost** and sends a **macOS notification only when the watched condition
-transitions** (ok→failing, below→above, absent→present, old→new). Your session ends; the daemon persists.
-That is the whole value: hand off watching you cannot keep doing yourself.
+checker with **zero runtime LLM cost** and delivers an alarm **only when the watched condition
+transitions** (ok→failing, below→above, absent→present, old→new). Delivery defaults to macOS
+Notification Center; an explicit `--webhook` sends the stable generic JSON payload documented in the
+README. Your session ends; the daemon persists. That is the whole value: hand off watching you cannot
+keep doing yourself.
 
 Reach for this when the user says "let me know / tell me / alert me / notify me / ping me **when**
 <something changes later>" and the change may happen after this chat ends. Do NOT reach for it for a
@@ -28,9 +30,9 @@ one-off check you can do right now (just do the check).
 
 | Command | Use |
 |---|---|
-| `watchtell add "<request>" --yes` | Compile the request, print the generated checker + meta, keep it, hash-bind it, run one immediate (silent, no-notification) test. `--yes` skips the interactive keep prompt — required for non-interactive agent use. Add `--interval <duration>` (`600`, `90s`, `5m`, `1h`) to set the poll interval deterministically — it overrides the compiler-inferred value; **prefer this over relying on inference**. |
+| `watchtell add "<request>" --yes` | Compile the request, print the generated checker + meta, keep it, hash-bind it, run one immediate test with no delivery. `--yes` skips the interactive keep prompt — required for non-interactive agent use. Add `--interval <duration>` (`600`, `90s`, `5m`, `1h`) to set the poll interval deterministically — it overrides the compiler-inferred value; **prefer this over relying on inference**. Add `--webhook <url>` only when the user requests generic JSON webhook delivery instead of local Notification Center. |
 | `watchtell list` | Show every checker: id, request, interval, route, last state, last fired. |
-| `watchtell test <id>` | Run one checker now (ignores schedule), print its result. Sends NO notification. |
+| `watchtell test <id>` | Run one checker now (ignores schedule), print its result. Delivers neither a local notification nor a webhook. |
 | `watchtell rm <id>` | Delete a checker + its trust record + state. |
 | `watchtell daemon status` | running / not running / stale-pid. |
 | `watchtell daemon start --detach` | Start the poller in the background for this login. |
@@ -47,7 +49,7 @@ Run these first and act on the result (do not assume anything is installed or ru
 2. **A compile CLI available?** `command -v claude || command -v codex`. `watchtell add` shells out to one
    of these to compile the request (no API key — it uses the CLI you're already logged into). If neither
    is on PATH, tell the user; `add` cannot compile without one.
-3. **macOS?** watchtell is macOS-only (notifications use Notification Center; auto-start uses launchd). On
+3. **macOS?** watchtell is macOS-only (local notifications use Notification Center; auto-start uses launchd). On
    any other OS, say so and stop.
 4. **Daemon running?** `watchtell daemon status`. See §5 — a registered alarm does nothing until a daemon
    is polling.
@@ -62,6 +64,8 @@ user and get an explicit yes:
 - the **poll interval** ("every 5 minutes"),
 - **what it will fetch** — the URL/endpoint — and **with what auth** (a public endpoint, or a logged-in
   session via an auth wrapper like `auth-curl`, which uses your existing browser cookies),
+- the **delivery route** and, for webhook delivery, the destination's scheme+host; do not echo a secret
+  path in prose (the full URL is stored in private checker metadata but never printed or logged),
 - that this **spawns claude/codex now** and **runs generated bash persistently** afterward.
 
 One consent per alarm. Never register an alarm the user did not ask for. Never batch-register.
@@ -86,8 +90,9 @@ Make the request precise and self-contained. Rules:
    cookie-carrying wrapper the user has) **and name the sentinel that means logged-out** so it can alarm
    "re-login needed" instead of silently breaking (e.g. the page contains "권한이 없습니다"). If it's public,
    say "public API, no auth" so the compiler doesn't add auth it doesn't need.
-7. **Put the URL you want to OPEN into the alarm message.** If `terminal-notifier` is installed the first
-   URL in the message becomes click-to-open, so add: "include <URL> in the alert so I can click through".
+7. **For local delivery, put the URL you want to OPEN into the alarm message.** If `terminal-notifier` is
+   installed the first URL in the message becomes click-to-open, so add: "include <URL> in the alert so I
+   can click through". This does not affect webhook delivery.
 8. **Set the interval explicitly with `--interval`** (`--interval 5m`, `600`, `90s`, `1h`) — it overrides
    the compiler and is deterministic, killing the mis-inference error class. Prefer it over stating the
    interval only in words. If you do leave it to inference, state it in plain words ("every 5 minutes")
@@ -110,9 +115,11 @@ Make the request precise and self-contained. Rules:
 ## 4. Register + verify (do all of this before saying "it's live")
 
 1. Get consent (§2) and draft a good request (§3).
-2. `watchtell add "<request>" --yes --interval <duration>` — pass `--interval` (e.g. `--interval 10m`) so
-   the poll interval is deterministic instead of inferred. The command prints the **full generated bash**
-   and a `meta: interval=<N>s route=<r>` line, keeps it, and runs one immediate silent test.
+2. `watchtell add "<request>" --yes --interval <duration> [--webhook <url>]` — pass `--interval` (e.g.
+   `--interval 10m`) so the poll interval is deterministic instead of inferred. Include `--webhook` only
+   for user-approved webhook delivery. The command prints the **full generated bash** and a
+   `meta: interval=<N>s route=<r>` line (plus the redacted webhook scheme+host when applicable), keeps it,
+   and runs one immediate test without delivering locally or by webhook.
 3. **Review the printed script** (it's in the command's stdout — read it there; do NOT open or edit the
    files under `~/.watchtell/checkers/`). Confirm:
    - it fetches the **right URL**, with the auth you intended;
@@ -123,6 +130,8 @@ Make the request precise and self-contained. Rules:
      are installed.
    - the `meta` **interval matches** the requested duration after applying the 60s floor (deterministic
      when you passed `--interval`; still worth a glance).
+   - the `meta` **route matches** the approved destination; for webhook delivery, verify the printed
+     redacted scheme+host without exposing the secret path.
 4. `watchtell test <id>` — expect `silent (no transition)` (first run recorded a baseline) or a sane
    `TRANSITION: …`. Run it again to confirm a steady target stays silent.
 5. **Decide:**
@@ -147,8 +156,8 @@ Make the request precise and self-contained. Rules:
   only until logout. Explain the trade-off and let the user pick; prefer `install` for anything meant to
   persist.
 - **stale pid** → `watchtell daemon start --detach` (or `install`) clears it.
-- Note the limits: a user LaunchAgent does **not** run while logged out; notifications need a GUI login
-  session. This is a local, single-user tool.
+- Note the limits: a user LaunchAgent does **not** run while logged out; local Notification Center
+  delivery needs a GUI login session. The daemon itself remains a local, single-user tool.
 
 ## 6. What watchtell is NOT for (don't stretch it)
 
@@ -157,12 +166,16 @@ Say so plainly and suggest the right tool instead:
   page-diffing.
 - **Not for sub-minute frequencies.** Checks are quick probes on a poll loop; recommend ≥5 min, never
   below ~1 min. Don't hammer a target.
-- **Not for team / headless / remote / CI use.** Notifications are macOS-local to one logged-in user.
-  There is no Slack/LINE/webhook routing (a `route=slack` compiles but is relayed to local notify).
+- **Not a hosted or team monitoring service.** The default route is macOS-local Notification Center,
+  tied to one logged-in user. `watchtell add ... --webhook <url>` can POST generic JSON to an endpoint
+  that accepts arbitrary JSON. Raw Slack and Discord incoming webhooks reject that schema because they
+  require `text` and `content`, respectively; use a small user-run relay to reshape it. The daemon still
+  runs locally on the Mac, and watchtell does no per-service formatting.
 - **Not real-time or guaranteed delivery.** Polling + transition-dedupe; a rapid flap between two polls
   can be missed.
-- **Not for secrets.** The request text is stored verbatim in `meta.json` and checkers are plain files —
-  never put tokens/credentials in the request.
+- **Do not embed secrets in the request or checker.** The request text is stored verbatim in `meta.json`
+  and checkers are plain files. A webhook credential belongs only in `--webhook`; watchtell stores that
+  URL in private metadata and redacts its path from output and logs.
 
 ## 7. Never do
 
