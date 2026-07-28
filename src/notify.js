@@ -2,11 +2,38 @@
 
 const { spawnSync } = require('child_process');
 const store = require('./store');
+const webhook = require('./webhook');
 
 // Dispatch a notification for a checker's transition line.
 //
-// The only supported route is `notify` = macOS Notification Center. Any other
-// route (e.g. `slack`) accepted at compile time is relayed through `notify` here.
+// Routes:
+//   - `webhook` (with `opts.webhookUrl`): POST the alarm as JSON to that URL. On
+//     failure, ALSO surface a best-effort local Notification Center note so a
+//     broken webhook URL is never silent — this local note does not change the
+//     dispatch result, so the owed-alarm queue accounts only for the POST.
+//   - `notify` (and any other compiler-invented route, e.g. `slack`): deliver to
+//     macOS Notification Center. Unsupported routes fall back to notify.
+function dispatch(route, title, message, opts = {}) {
+  if (route === 'webhook' && opts.webhookUrl) {
+    const payload = webhook.buildPayload({
+      id: opts.id,
+      request: opts.request,
+      message,
+      firedAt: opts.firedAt,
+    });
+    const r = webhook.deliver(opts.webhookUrl, payload, { timeoutMs: opts.webhookTimeoutMs });
+    if (!r.ok) {
+      // Best-effort local surface; intentionally ignore its result.
+      deliverLocal('watchtell: webhook delivery failed', `webhook delivery failed for ${opts.id}`, opts);
+    }
+    return { ok: r.ok, route: 'webhook', requestedRoute: 'webhook' };
+  }
+  const effectiveRoute = store.SUPPORTED_ROUTES.includes(route) ? route : 'notify';
+  const r = deliverLocal(title, message, opts);
+  return { ok: r.ok, route: effectiveRoute, requestedRoute: route };
+}
+
+// Deliver one note to macOS Notification Center. Returns { ok }.
 //
 // Delivery preference (highest first):
 //   1. WATCHTELL_NOTIFY_CMD override (tests/mocks): run via `sh -c` with
@@ -15,8 +42,7 @@ const store = require('./store');
 //      When the message contains a URL it is passed as `-open <url>`, making the
 //      notification click-to-open. Strictly optional; absent -> fall back.
 //   3. osascript `display notification` (no extra dependency).
-function dispatch(route, title, message, opts = {}) {
-  const effectiveRoute = store.SUPPORTED_ROUTES.includes(route) ? route : 'notify';
+function deliverLocal(title, message, opts = {}) {
   const override = process.env.WATCHTELL_NOTIFY_CMD;
   if (override) {
     const r = spawnSync('sh', ['-c', override], {
@@ -25,10 +51,10 @@ function dispatch(route, title, message, opts = {}) {
         ...process.env,
         WATCHTELL_TITLE: title,
         WATCHTELL_MESSAGE: message,
-        WATCHTELL_ROUTE: effectiveRoute,
+        WATCHTELL_ROUTE: 'notify',
       },
     });
-    return { ok: r.status === 0, route: effectiveRoute, requestedRoute: route };
+    return { ok: r.status === 0 };
   }
 
   // Injectable seam for tests: pass `terminalNotifierPath` (a path, or null to
@@ -39,12 +65,12 @@ function dispatch(route, title, message, opts = {}) {
   if (tnPath) {
     const args = buildTerminalNotifierArgs({ title, message });
     const r = spawnSync(tnPath, args, { encoding: 'utf8' });
-    return { ok: r.status === 0, route: effectiveRoute, requestedRoute: route };
+    return { ok: r.status === 0 };
   }
 
   const script = `display notification ${quote(message)} with title ${quote(title)}`;
   const r = spawnSync('osascript', ['-e', script], { encoding: 'utf8' });
-  return { ok: r.status === 0, route: effectiveRoute, requestedRoute: route };
+  return { ok: r.status === 0 };
 }
 
 // Build terminal-notifier argv. Never a shell string: title/message/url are
@@ -78,4 +104,4 @@ function quote(s) {
   return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
-module.exports = { dispatch, buildTerminalNotifierArgs, extractOpenUrl };
+module.exports = { dispatch, deliverLocal, buildTerminalNotifierArgs, extractOpenUrl };

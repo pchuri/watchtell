@@ -40,7 +40,7 @@ Compilation allows 10 minutes per attempt and makes at most two attempts: if the
 
 | Command | What it does |
 |---|---|
-| `watchtell add "<request>"` | Compile the request at add time, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). `--interval <duration>` sets the poll interval explicitly (`600`, `90s`, `5m`, `1h`) and overrides the compiler-inferred value. |
+| `watchtell add "<request>"` | Compile the request at add time, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). `--interval <duration>` sets the poll interval explicitly (`600`, `90s`, `5m`, `1h`) and overrides the compiler-inferred value. `--webhook <url>` delivers fired alarms by POSTing JSON to an http(s) URL instead of local Notification Center (see [Notifications](#notifications)). |
 | `watchtell list` | Show checkers: id, request, interval, route, last state, last fired. |
 | `watchtell test <id>` | Force one run now (ignores the schedule) and show the output/transition. Does not send a notification. |
 | `watchtell rm <id>` | Delete a checker and its trust record + state sidecar. |
@@ -123,9 +123,41 @@ A generated checker is arbitrary code, so it never runs before you approve it:
 
 ## Notifications
 
-watchtell currently has one route: **`notify`** = macOS Notification Center. A checker may compile with a different `route=` (e.g. `slack`); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. Slack webhook delivery is not implemented.
+watchtell has two delivery routes:
+
+- **`notify`** (default) = macOS Notification Center.
+- **`webhook`** = POST the fired alarm as JSON to a URL you supply with `--webhook`.
+
+A checker may still *compile* with some other `route=` the generator invents (e.g. `slack`); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. The `webhook` route is set **only** by the explicit `--webhook` flag — the compiler never infers a webhook URL.
 
 **Clickable notifications (optional).** If [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) is available on `PATH` (`brew install terminal-notifier`), watchtell delivers through it so clicking a notification opens the first URL found in the alarm message. Without it, watchtell falls back to `osascript` (notifications still show, just aren't clickable) — no new hard dependency.
+
+### Webhook delivery
+
+`watchtell add "<request>" --webhook <url>` sets `route=webhook` and stores the URL in the checker's meta. When the checker fires, watchtell POSTs `Content-Type: application/json` with this minimal, stable payload:
+
+```json
+{
+  "id": "a1b2c3",
+  "request": "notify me when CI goes red",
+  "message": "CI entered failing state",
+  "firedAt": "2026-07-28T12:34:56.000Z"
+}
+```
+
+- `id` — the checker id. `request` — your original natural-language request. `message` — the single alarm line the checker emitted. `firedAt` — ISO 8601 timestamp of the transition.
+- The URL must be `http`/`https` and is validated at add time. Non-2xx responses, transport errors, redirects, and timeouts all count as a **failed dispatch**, so the same [delivery-reliability queue](#delivery-reliability) applies: retry up to 5 ticks, newest-wins supersede, exactly-once on success, then give up (logged).
+- On a failed webhook dispatch watchtell also raises a **local** Notification Center note (`webhook delivery failed for <id>`) so a broken URL is never silent.
+- **Secret hygiene.** Slack/Discord/ntfy webhook URLs embed a secret in their path. watchtell **never logs or prints the full URL** — `daemon.log`, `watchtell list`, and the `add` output show only scheme+host (e.g. `https://hooks.slack.com`). The URL is stored in `~/.watchtell/checkers/<id>.meta.json`, which — like all state/meta files — is user-private; don't share it.
+
+**Slack incoming webhook example.** Slack expects a `text` field, so point watchtell's generic payload at a small relay if you need Slack-native formatting; for a raw archive of alarms any endpoint works:
+
+```sh
+watchtell add "notify me when my service health endpoint starts 5xx-ing" \
+  --webhook "https://alerts.example.net/watchtell/slack"
+```
+
+Because the payload is intentionally service-agnostic (no `text`/blocks templating), Discord and ntfy incoming webhooks and arbitrary API triggers work the same way. Per-service formatting, custom headers/auth, and payload templating are out of scope for v1.
 
 ## Development
 

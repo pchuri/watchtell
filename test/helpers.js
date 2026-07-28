@@ -32,6 +32,7 @@ function createChecker(scriptBytes, meta = {}) {
     request: meta.request || 'test checker',
     interval: meta.interval || 1,
     route: meta.route || 'notify',
+    ...(meta.webhookUrl ? { webhookUrl: meta.webhookUrl } : {}),
     agent: 'fixture',
     createdAt: meta.createdAt || new Date().toISOString(),
   });

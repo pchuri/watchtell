@@ -10,6 +10,7 @@ const paths = require('./paths');
 const compile = require('./compile');
 const store = require('./store');
 const trust = require('./trust');
+const webhook = require('./webhook');
 const run = require('./run');
 const daemon = require('./daemon');
 const launchd = require('./launchd');
@@ -51,6 +52,18 @@ async function cmdAdd(request, options) {
     }
   }
 
+  // Validate an explicit --webhook URL BEFORE compiling so a bad URL fails fast
+  // without spending an LLM compile. The flag is the ONLY way to set route=webhook;
+  // the compiler never infers or emits a webhook URL.
+  let webhookUrl = null;
+  if (options.webhook != null) {
+    try {
+      webhookUrl = webhook.validateUrl(options.webhook);
+    } catch (e) {
+      return fail(e.message);
+    }
+  }
+
   let compiled;
   try {
     compiled = compile.compile(request);
@@ -67,13 +80,22 @@ async function cmdAdd(request, options) {
     meta.interval = floored.interval;
     compiled.intervalNotice = floored.notice;
   }
+
+  // An explicit --webhook sets the webhook route deterministically, overriding
+  // whatever the compiler inferred. The URL is stored in meta (never logged in full).
+  if (webhookUrl != null) {
+    meta.route = 'webhook';
+    meta.webhookUrl = webhookUrl;
+  }
   process.stdout.write(`\nCompiled by ${compiled.agent}. Generated checker:\n\n`);
   process.stdout.write(script.replace(/^/gm, '  '));
   if (compiled.intervalNotice) {
     process.stdout.write(`  ${compiled.intervalNotice}\n`);
   }
   process.stdout.write(`\n  meta: interval=${meta.interval}s route=${meta.route}\n`);
-  if (!store.SUPPORTED_ROUTES.includes(meta.route)) {
+  if (meta.route === 'webhook') {
+    process.stdout.write(`  webhook: ${webhook.redactUrl(meta.webhookUrl)} (path redacted)\n`);
+  } else if (!store.SUPPORTED_ROUTES.includes(meta.route)) {
     process.stdout.write(
       `  note: route '${meta.route}' not yet supported, using notify\n`
     );
@@ -99,6 +121,7 @@ async function cmdAdd(request, options) {
     request,
     interval: meta.interval,
     route: meta.route,
+    ...(meta.webhookUrl ? { webhookUrl: meta.webhookUrl } : {}),
     agent: compiled.agent,
     createdAt: nowIso(),
   });
@@ -409,6 +432,11 @@ function buildProgram() {
       '--interval <duration>',
       'set the poll interval explicitly (e.g. 600, 90s, 5m, 1h); ' +
         'overrides the compiler-inferred value'
+    )
+    .option(
+      '--webhook <url>',
+      'deliver fired alarms by POSTing JSON to this http(s) URL (route=webhook) ' +
+        'instead of local Notification Center'
     )
     .description(
       'compile a request into a checker, review it, keep + hash-bind it ' +

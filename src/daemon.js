@@ -52,9 +52,12 @@ function readState(id) {
 //
 // `attempts` is the count of prior (failed) attempts for this alarm; `queuedAt` is
 // when it was first owed. Returns the result entry for runDue's list.
-function attemptDelivery({ id, output, route, request, attempts, queuedAt, now, notifyFn, logFn, updated }) {
+function attemptDelivery({ id, output, route, request, webhookUrl, attempts, queuedAt, now, notifyFn, logFn, updated }) {
   const attempt = attempts + 1;
-  const disp = notifyFn(route, `watchtell: ${request}`, output);
+  // firedAt is the transition time (when the alarm was first owed), kept stable
+  // across retries by deriving it from queuedAt rather than the dispatch time.
+  const firedAt = new Date(queuedAt).toISOString();
+  const disp = notifyFn(route, `watchtell: ${request}`, output, { id, request, webhookUrl, firedAt });
   updated.lastOutput = output;
 
   if (disp && disp.ok) {
@@ -73,7 +76,7 @@ function attemptDelivery({ id, output, route, request, attempts, queuedAt, now, 
     return { id, fired: false, output, dispatch: disp, gaveUp: true };
   }
   // Preserve the owed alarm for the next tick.
-  updated.pending = { output, route, request, attempts: attempt, queuedAt };
+  updated.pending = { output, route, request, webhookUrl, attempts: attempt, queuedAt };
   updated.lastError = 'notification dispatch failed';
   return { id, fired: false, output, dispatch: disp };
 }
@@ -149,7 +152,7 @@ function runDue(opts = {}) {
       const updated = { ...runtime };
       const p = updated.pending;
       const r = attemptDelivery({
-        id, output: p.output, route: p.route, request: p.request,
+        id, output: p.output, route: p.route, request: p.request, webhookUrl: p.webhookUrl,
         attempts: p.attempts, queuedAt: p.queuedAt, now, notifyFn, logFn, updated,
       });
       if (!commitRuntime(id, updated)) {
@@ -200,7 +203,7 @@ function runDue(opts = {}) {
         logFn(`NOTIFY-SUPERSEDED ${id}: newer transition replaces queued alarm`);
       }
       const r = attemptDelivery({
-        id, output: res.output, route: meta.route, request: meta.request,
+        id, output: res.output, route: meta.route, request: meta.request, webhookUrl: meta.webhookUrl,
         attempts: 0, queuedAt: now, now, notifyFn, logFn, updated,
       });
       if (!commitRuntime(id, updated)) {
@@ -215,7 +218,7 @@ function runDue(opts = {}) {
       // No fresh transition, but an alarm is still owed: retry it this tick.
       const p = updated.pending;
       const r = attemptDelivery({
-        id, output: p.output, route: p.route, request: p.request,
+        id, output: p.output, route: p.route, request: p.request, webhookUrl: p.webhookUrl,
         attempts: p.attempts, queuedAt: p.queuedAt, now, notifyFn, logFn, updated,
       });
       if (r.fired && checkerFailure) {

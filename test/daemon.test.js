@@ -307,7 +307,16 @@ test('a pending alarm retries with unreadable metadata', () => {
 
     assert.strictEqual(result.fired, true);
     assert.strictEqual(result.retried, true);
-    assert.deepStrictEqual(deliveries, [['notify', 'watchtell: original request', 'owed alarm']]);
+    assert.strictEqual(deliveries.length, 1);
+    assert.deepStrictEqual(deliveries[0].slice(0, 3), [
+      'notify',
+      'watchtell: original request',
+      'owed alarm',
+    ]);
+    // The notifier now receives a delivery context (id/request/webhookUrl/firedAt).
+    assert.strictEqual(deliveries[0][3].id, id);
+    assert.strictEqual(deliveries[0][3].request, 'original request');
+    assert.strictEqual(deliveries[0][3].webhookUrl, undefined);
     assert.ok(!store.readRuntime(id).pending);
   } finally {
     cleanup(home);

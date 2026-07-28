@@ -157,8 +157,10 @@ Say so plainly and suggest the right tool instead:
   page-diffing.
 - **Not for sub-minute frequencies.** Checks are quick probes on a poll loop; recommend ≥5 min, never
   below ~1 min. Don't hammer a target.
-- **Not for team / headless / remote / CI use.** Notifications are macOS-local to one logged-in user.
-  There is no Slack/LINE/webhook routing (a `route=slack` compiles but is relayed to local notify).
+- **Not for team / headless / remote / CI use.** The default route is macOS-local Notification Center,
+  tied to one logged-in user. A checker can instead POST fired alarms to a URL with
+  `watchtell add ... --webhook <url>` (route=webhook — Slack/Discord/ntfy incoming webhooks or any
+  http(s) endpoint), but the daemon still runs locally on the Mac; there is no per-service formatting.
 - **Not real-time or guaranteed delivery.** Polling + transition-dedupe; a rapid flap between two polls
   can be missed.
 - **Not for secrets.** The request text is stored verbatim in `meta.json` and checkers are plain files —
