@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/pchuri/watchtell/compare/v1.0.1...v1.1.0) (2026-07-28)
+
+
+### Features
+
+* add generic webhook delivery route ([#21](https://github.com/pchuri/watchtell/issues/21)) ([a4d6a0d](https://github.com/pchuri/watchtell/commit/a4d6a0ded421b531ce7fc0adb3f2b7a1f9648762)), closes [#18](https://github.com/pchuri/watchtell/issues/18)
+
 ## [1.0.1](https://github.com/pchuri/watchtell/compare/v1.0.0...v1.0.1) (2026-07-27)
 
 
