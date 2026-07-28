@@ -158,9 +158,10 @@ Say so plainly and suggest the right tool instead:
 - **Not for sub-minute frequencies.** Checks are quick probes on a poll loop; recommend ≥5 min, never
   below ~1 min. Don't hammer a target.
 - **Not for team / headless / remote / CI use.** The default route is macOS-local Notification Center,
-  tied to one logged-in user. A checker can instead POST fired alarms to a URL with
-  `watchtell add ... --webhook <url>` (route=webhook — Slack/Discord/ntfy incoming webhooks or any
-  http(s) endpoint), but the daemon still runs locally on the Mac; there is no per-service formatting.
+  tied to one logged-in user. `watchtell add ... --webhook <url>` can POST generic JSON to an endpoint
+  that accepts arbitrary JSON. Raw Slack and Discord incoming webhooks reject that schema because they
+  require `text` and `content`, respectively; use a small user-run relay to reshape it. The daemon still
+  runs locally on the Mac, and watchtell does no per-service formatting.
 - **Not real-time or guaranteed delivery.** Polling + transition-dedupe; a rapid flap between two polls
   can be missed.
 - **Not for secrets.** The request text is stored verbatim in `meta.json` and checkers are plain files —

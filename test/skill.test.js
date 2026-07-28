@@ -80,3 +80,11 @@ test('body mentions the real watchtell command names', () => {
     );
   }
 });
+
+test('webhook guidance requires a relay for service-specific schemas', () => {
+  const text = readSkill();
+  assert.match(text, /endpoint\s+that accepts arbitrary JSON/);
+  assert.match(text, /Slack and Discord incoming webhooks reject that schema/);
+  assert.match(text, /require `text` and `content`, respectively/);
+  assert.match(text, /user-run relay/);
+});
