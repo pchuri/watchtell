@@ -53,8 +53,8 @@ async function cmdAdd(request, options) {
   }
 
   // Validate an explicit --webhook URL BEFORE compiling so a bad URL fails fast
-  // without spending an LLM compile. The flag is the ONLY way to set route=webhook;
-  // the compiler never infers or emits a webhook URL.
+  // without spending an LLM compile. The flag is the ONLY way to activate webhook
+  // delivery; the compiler may emit route=webhook but never a webhook URL.
   let webhookUrl = null;
   if (options.webhook != null) {
     try {
@@ -163,7 +163,7 @@ function reportRun(id, res, { immediate }) {
     store.writeRuntime(id, runtime);
     process.stdout.write(`  TRANSITION: ${res.output}\n`);
     if (!immediate) {
-      process.stdout.write(`  (test does not send a notification; the daemon does)\n`);
+      process.stdout.write(`  (test does not deliver the alarm; the daemon does)\n`);
     }
   } else {
     store.writeRuntime(id, runtime);

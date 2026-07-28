@@ -123,7 +123,9 @@ function sweepRemoved(logFn) {
 //     new one gets a fresh attempt budget.
 //   - Otherwise a queued alarm is retried this tick even if the checker is not due,
 //     so transient notifier failures clear quickly without waiting a full interval.
-//   - A successful delivery clears `pending`, so an alarm is delivered exactly once.
+//   - A successful dispatch clears `pending`, so the daemon does not dispatch that
+//     alarm again. Webhook receivers may still observe a duplicate after an
+//     ambiguous failure and can deduplicate with the stable id/firedAt pair.
 //
 // Pure enough to unit-test: pass `now` and an optional `notifyFn`/`logFn`.
 function runDue(opts = {}) {

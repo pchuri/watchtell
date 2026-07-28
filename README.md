@@ -128,7 +128,7 @@ watchtell has two delivery routes:
 - **`notify`** (default) = macOS Notification Center.
 - **`webhook`** = POST the fired alarm as JSON to a URL you supply with `--webhook`.
 
-A checker may still *compile* with some other `route=` the generator invents (e.g. `slack`); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. The `webhook` route is set **only** by the explicit `--webhook` flag — the compiler never infers a webhook URL.
+A checker may still *compile* with some other `route=` the generator invents (including `webhook` without a URL); watchtell stores it but reports *"route not yet supported, using notify"* and relays through Notification Center. Webhook delivery is activated **only** by the explicit `--webhook` flag — the compiler never infers a webhook URL.
 
 **Clickable notifications (optional).** If [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) is available on `PATH` (`brew install terminal-notifier`), watchtell delivers through it so clicking a notification opens the first URL found in the alarm message. Without it, watchtell falls back to `osascript` (notifications still show, just aren't clickable) — no new hard dependency.
 
@@ -146,9 +146,10 @@ A checker may still *compile* with some other `route=` the generator invents (e.
 ```
 
 - `id` — the checker id. `request` — your original natural-language request. `message` — the single alarm line the checker emitted. `firedAt` — ISO 8601 timestamp of the transition.
-- The URL must be `http`/`https`, must not contain embedded username/password credentials, and is validated at add time. Non-2xx responses, transport errors, redirects, and timeouts all count as a **failed dispatch**, so the same [delivery-reliability queue](#delivery-reliability) applies: up to 5 total attempts, newest-wins supersede, exactly-once on success, then give up (logged).
-- On a failed webhook dispatch watchtell also raises a **local** Notification Center note (`webhook delivery failed for <id>`) so a broken URL is never silent.
-- **Secret hygiene.** Webhook URLs can embed a secret in their path. watchtell **never logs or prints the full URL** — `daemon.log`, `watchtell list`, and the `add` output show only scheme+host. The URL is stored in `~/.watchtell/checkers/<id>.meta.json`, which — like all state/meta files — is user-private; don't share it.
+- The URL must be `http`/`https`, must not contain embedded username/password credentials, and is validated at add time. Non-2xx responses, transport errors, redirects, and timeouts all count as a **failed dispatch**, so the same [delivery-reliability queue](#delivery-reliability) applies: up to 5 total attempts, newest-wins supersede, then give up (logged).
+- Each POST times out after 10 seconds. Set `WATCHTELL_WEBHOOK_TIMEOUT_MS` to a positive whole number of milliseconds, up to 300000, to change the limit; invalid values use the default.
+- On a failed webhook dispatch watchtell also attempts a **local** Notification Center note (`webhook delivery failed for <id>`) so a broken URL has a best-effort local signal.
+- **Secret hygiene.** Webhook URLs can embed a secret in their path. watchtell **never logs or prints the full URL** — `add` shows only scheme+host, while `watchtell list` and `daemon.log` omit the URL. The URL is stored with user-only permissions in `~/.watchtell/checkers/<id>.meta.json`; don't share it.
 
 **Slack relay example.** The webhook route targets endpoints that accept arbitrary JSON. Raw Slack incoming-webhook URLs require a `text` field and raw Discord incoming-webhook URLs require `content`, so both reject watchtell's generic schema. Point watchtell at a small user-run relay that reshapes the payload for those services:
 
@@ -174,7 +175,7 @@ By default the poll interval is inferred by the compiler from your request, whic
 
 ## Delivery reliability
 
-A checker records its state transition into its own sidecar *during* the run, before the daemon dispatches the alarm — so a failed delivery must not be dropped, or the transition would already be consumed and the alarm lost silently. When delivery fails, watchtell **queues the owed alarm** on the checker's runtime record and **retries it on every subsequent tick**, up to 5 total attempts, then gives up. Each failure logs `NOTIFY-FAILED <id> (attempt X/5)` and the give-up logs `NOTIFY-GIVEUP <id> after 5 attempts` to `daemon.log`; a successful delivery clears the queue so an alarm is delivered **exactly once**. If a *newer* transition occurs while an older alarm is still undelivered, the newest wins — the stale alarm is dropped (`NOTIFY-SUPERSEDED <id>`) because the current state is the truth and delivering both would be noise. Retries respect silence-by-default: they only ever redeliver the one alarm already owed.
+A checker records its state transition into its own sidecar *during* the run, before the daemon dispatches the alarm — so a failed delivery must not be dropped, or the transition would already be consumed and the alarm lost silently. When delivery fails, watchtell **queues the owed alarm** on the checker's runtime record and **retries it on every subsequent tick**, up to 5 total attempts, then gives up. Each failure logs `NOTIFY-FAILED <id> (attempt X/5)` and the give-up logs `NOTIFY-GIVEUP <id> after 5 attempts` to `daemon.log`; a successful delivery clears the queue. If a *newer* transition occurs while an older alarm is still undelivered, the newest wins — the stale alarm is dropped (`NOTIFY-SUPERSEDED <id>`) because the current state is the truth and delivering both would be noise. Retries respect silence-by-default: they only ever redeliver the one alarm already owed. Webhook retries keep `id` and `firedAt` stable so receivers can deduplicate them; a receiver that processes a request but loses its response may see the POST again.
 
 Running `watchtell test` manually advances the checker's state sidecar out of band but does not clear a queued pending alarm. The daemon intentionally delivers that genuinely owed alarm on its next tick.
 
