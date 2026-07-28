@@ -10,8 +10,8 @@ const DEFAULT_TIMEOUT_MS = 10000;
 const MAX_TIMEOUT_MS = 300000;
 const POSTER = path.join(__dirname, 'webhook-post.js');
 
-// Validate a user-supplied webhook target URL. Accept only http/https and
-// parseable URLs; reject everything else (garbage, ftp, empty). Returns the
+// Validate a user-supplied webhook target URL. Accept only parseable http/https
+// URLs without embedded credentials; reject everything else. Returns the
 // normalized href. Throws Error with a user-facing message on invalid input.
 function validateUrl(raw) {
   const s = String(raw == null ? '' : raw).trim();

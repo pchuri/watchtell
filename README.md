@@ -14,7 +14,7 @@ watchtell add "notify me when repo Y publishes a new release"
 
 ## Requirements
 
-- **Node.js >= 20** and **macOS** (notifications use macOS Notification Center).
+- **Node.js >= 20** and **macOS** (local notifications use Notification Center; auto-start uses launchd).
 - An installed, already-authenticated agent CLI on your `PATH`: **`claude`** (preferred) or **`codex`**. No API keys — watchtell shells out to the CLI you already use. The agent is called **only** at `add` time; the daemon never calls it.
 
 ## Install
@@ -146,7 +146,7 @@ A checker may still *compile* with some other `route=` the generator invents (e.
 ```
 
 - `id` — the checker id. `request` — your original natural-language request. `message` — the single alarm line the checker emitted. `firedAt` — ISO 8601 timestamp of the transition.
-- The URL must be `http`/`https` and is validated at add time. Non-2xx responses, transport errors, redirects, and timeouts all count as a **failed dispatch**, so the same [delivery-reliability queue](#delivery-reliability) applies: up to 5 total attempts, newest-wins supersede, exactly-once on success, then give up (logged).
+- The URL must be `http`/`https`, must not contain embedded username/password credentials, and is validated at add time. Non-2xx responses, transport errors, redirects, and timeouts all count as a **failed dispatch**, so the same [delivery-reliability queue](#delivery-reliability) applies: up to 5 total attempts, newest-wins supersede, exactly-once on success, then give up (logged).
 - On a failed webhook dispatch watchtell also raises a **local** Notification Center note (`webhook delivery failed for <id>`) so a broken URL is never silent.
 - **Secret hygiene.** Webhook URLs can embed a secret in their path. watchtell **never logs or prints the full URL** — `daemon.log`, `watchtell list`, and the `add` output show only scheme+host. The URL is stored in `~/.watchtell/checkers/<id>.meta.json`, which — like all state/meta files — is user-private; don't share it.
 

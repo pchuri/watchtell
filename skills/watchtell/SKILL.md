@@ -49,7 +49,7 @@ Run these first and act on the result (do not assume anything is installed or ru
 2. **A compile CLI available?** `command -v claude || command -v codex`. `watchtell add` shells out to one
    of these to compile the request (no API key — it uses the CLI you're already logged into). If neither
    is on PATH, tell the user; `add` cannot compile without one.
-3. **macOS?** watchtell is macOS-only (notifications use Notification Center; auto-start uses launchd). On
+3. **macOS?** watchtell is macOS-only (local notifications use Notification Center; auto-start uses launchd). On
    any other OS, say so and stop.
 4. **Daemon running?** `watchtell daemon status`. See §5 — a registered alarm does nothing until a daemon
    is polling.
