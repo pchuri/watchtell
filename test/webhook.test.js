@@ -10,6 +10,7 @@ const webhook = require('../src/webhook');
 const notify = require('../src/notify');
 const daemon = require('../src/daemon');
 const store = require('../src/store');
+const paths = require('../src/paths');
 const { makeHome, cleanup, createChecker, probeChecker } = require('./helpers');
 
 const drain = () => new Promise((res) => setImmediate(res));
@@ -27,12 +28,45 @@ test('validateUrl accepts http and https and normalizes', () => {
 });
 
 test('validateUrl rejects non-http(s), garbage, and empty', () => {
-  assert.throws(() => webhook.validateUrl('ftp://example.com/x'), /must be http or https/);
-  assert.throws(() => webhook.validateUrl('not a url'), /invalid webhook URL/);
+  const protocolSecret = 'ftp://example.com/SECRET';
+  const malformedSecret = 'not a url SECRET';
+  assert.throws(
+    () => webhook.validateUrl(protocolSecret),
+    (error) =>
+      error.message === 'webhook URL must be http or https' &&
+      !error.message.includes(protocolSecret)
+  );
+  assert.throws(
+    () => webhook.validateUrl(malformedSecret),
+    (error) => error.message === 'invalid webhook URL' && !error.message.includes(malformedSecret)
+  );
   assert.throws(() => webhook.validateUrl(''), /empty/);
   assert.throws(() => webhook.validateUrl('   '), /empty/);
   assert.throws(() => webhook.validateUrl(null), /empty/);
   assert.throws(() => webhook.validateUrl('file:///etc/passwd'), /must be http or https/);
+});
+
+test('store keeps metadata and runtime records private on every write', () => {
+  const home = makeHome();
+  const id = 'abc123';
+  const metaFile = paths.metaPath(id);
+  const runtimeFile = paths.runtimePath(id);
+  const permissions = (file) => fs.statSync(file).mode & 0o777;
+  try {
+    store.writeMeta(id, { webhookUrl: 'https://example.com/SECRET' });
+    store.writeRuntime(id, { pending: { webhookUrl: 'https://example.com/SECRET' } });
+    assert.strictEqual(permissions(metaFile), 0o600);
+    assert.strictEqual(permissions(runtimeFile), 0o600);
+
+    fs.chmodSync(metaFile, 0o644);
+    fs.chmodSync(runtimeFile, 0o644);
+    store.writeMeta(id, store.readMeta(id));
+    store.writeRuntime(id, store.readRuntime(id));
+    assert.strictEqual(permissions(metaFile), 0o600);
+    assert.strictEqual(permissions(runtimeFile), 0o600);
+  } finally {
+    cleanup(home);
+  }
 });
 
 // --- redactUrl: pure --------------------------------------------------------

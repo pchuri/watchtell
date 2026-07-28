@@ -19,12 +19,10 @@ function validateUrl(raw) {
   try {
     u = new URL(s);
   } catch {
-    throw new Error(`invalid webhook URL: ${s}`);
+    throw new Error('invalid webhook URL');
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-    throw new Error(
-      `webhook URL must be http or https (got '${u.protocol.replace(/:$/, '')}')`
-    );
+    throw new Error('webhook URL must be http or https');
   }
   return u.href;
 }
@@ -56,8 +54,8 @@ function deliver(url, payload, opts = {}) {
     opts.timeoutMs ||
     parseInt(process.env.WATCHTELL_WEBHOOK_TIMEOUT_MS || '', 10) ||
     DEFAULT_TIMEOUT_MS;
-  const child = spawnSync(process.execPath, [POSTER, String(url)], {
-    input: JSON.stringify(payload),
+  const child = spawnSync(process.execPath, [POSTER], {
+    input: JSON.stringify({ url: String(url), payload }),
     encoding: 'utf8',
     // Give the parent a little headroom over the child's own fetch timeout so a
     // clean non-2xx/timeout exit is observed rather than a hard kill.

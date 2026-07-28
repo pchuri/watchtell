@@ -93,7 +93,7 @@ async function cmdAdd(request, options) {
     process.stdout.write(`  ${compiled.intervalNotice}\n`);
   }
   process.stdout.write(`\n  meta: interval=${meta.interval}s route=${meta.route}\n`);
-  if (meta.route === 'webhook') {
+  if (meta.route === 'webhook' && meta.webhookUrl) {
     process.stdout.write(`  webhook: ${webhook.redactUrl(meta.webhookUrl)} (path redacted)\n`);
   } else if (!store.SUPPORTED_ROUTES.includes(meta.route)) {
     process.stdout.write(

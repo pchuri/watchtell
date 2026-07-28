@@ -26,13 +26,19 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-function writeJson(file, obj, mode) {
-  const opts = mode ? { mode } : undefined;
-  fs.writeFileSync(file, JSON.stringify(obj, null, 2) + '\n', opts);
+function writePrivateJson(file, obj) {
+  const json = JSON.stringify(obj, null, 2) + '\n';
+  const fd = fs.openSync(file, 'w', 0o600);
+  try {
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, json, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function writeMeta(id, meta) {
-  writeJson(paths.metaPath(id), meta);
+  writePrivateJson(paths.metaPath(id), meta);
 }
 
 function readMeta(id) {
@@ -56,7 +62,7 @@ function readRuntime(id) {
 }
 
 function writeRuntime(id, runtime) {
-  writeJson(paths.runtimePath(id), runtime);
+  writePrivateJson(paths.runtimePath(id), runtime);
 }
 
 // Every checker id present on disk, sorted by creation time (oldest first).

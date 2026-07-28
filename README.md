@@ -148,16 +148,16 @@ A checker may still *compile* with some other `route=` the generator invents (e.
 - `id` — the checker id. `request` — your original natural-language request. `message` — the single alarm line the checker emitted. `firedAt` — ISO 8601 timestamp of the transition.
 - The URL must be `http`/`https` and is validated at add time. Non-2xx responses, transport errors, redirects, and timeouts all count as a **failed dispatch**, so the same [delivery-reliability queue](#delivery-reliability) applies: retry up to 5 ticks, newest-wins supersede, exactly-once on success, then give up (logged).
 - On a failed webhook dispatch watchtell also raises a **local** Notification Center note (`webhook delivery failed for <id>`) so a broken URL is never silent.
-- **Secret hygiene.** Slack/Discord/ntfy webhook URLs embed a secret in their path. watchtell **never logs or prints the full URL** — `daemon.log`, `watchtell list`, and the `add` output show only scheme+host (e.g. `https://hooks.slack.com`). The URL is stored in `~/.watchtell/checkers/<id>.meta.json`, which — like all state/meta files — is user-private; don't share it.
+- **Secret hygiene.** Webhook URLs can embed a secret in their path. watchtell **never logs or prints the full URL** — `daemon.log`, `watchtell list`, and the `add` output show only scheme+host. The URL is stored in `~/.watchtell/checkers/<id>.meta.json`, which — like all state/meta files — is user-private; don't share it.
 
-**Slack incoming webhook example.** Slack expects a `text` field, so point watchtell's generic payload at a small relay if you need Slack-native formatting; for a raw archive of alarms any endpoint works:
+**Slack relay example.** The webhook route targets endpoints that accept arbitrary JSON. Raw Slack incoming-webhook URLs require a `text` field and raw Discord incoming-webhook URLs require `content`, so both reject watchtell's generic schema. Point watchtell at a small user-run relay that reshapes the payload for those services:
 
 ```sh
 watchtell add "notify me when my service health endpoint starts 5xx-ing" \
   --webhook "https://alerts.example.net/watchtell/slack"
 ```
 
-Because the payload is intentionally service-agnostic (no `text`/blocks templating), Discord and ntfy incoming webhooks and arbitrary API triggers work the same way. Per-service formatting, custom headers/auth, and payload templating are out of scope for v1.
+Arbitrary-JSON endpoints can receive the payload directly; service-specific destinations can sit behind a relay. Per-service formatting, custom headers/auth, and payload templating are out of scope for v1.
 
 ## Development
 

@@ -58,19 +58,41 @@ test('add rejects an invalid --webhook URL before compiling (no checker, no comp
   try {
     process.exitCode = 0;
     const errs = [];
+    const invalidUrl = 'ftp://nope/SECRETPART';
     const origErr = process.stderr.write;
     process.stderr.write = (c) => (errs.push(String(c)), true);
     try {
-      await cli.cmdAdd('ping me when CI goes red', { yes: true, webhook: 'ftp://nope' });
+      await cli.cmdAdd('ping me when CI goes red', { yes: true, webhook: invalidUrl });
     } finally {
       process.stderr.write = origErr;
     }
     assert.strictEqual(process.exitCode, 1, 'add failed');
     assert.match(errs.join(''), /http or https/);
+    assert.ok(!errs.join('').includes(invalidUrl), 'invalid URL is not printed');
     assert.strictEqual(store.listIds().length, 0, 'no checker written');
     assert.ok(!fs.existsSync(marker), 'compiler was never invoked');
   } finally {
     process.exitCode = savedExit;
+    delete process.env.WATCHTELL_COMPILER_CMD;
+    cleanup(home);
+  }
+});
+
+test('compiler-emitted webhook route without --webhook falls back to notify presentation', async () => {
+  const home = makeHome();
+  process.env.WATCHTELL_COMPILER_CMD = FAKE_COMPILER;
+  process.env.FAKE_ROUTE = 'webhook';
+  try {
+    const out = await captureStdout(() =>
+      cli.cmdAdd('ping me when CI goes red', { yes: true })
+    );
+    const meta = store.readMeta(store.listIds()[0]);
+    assert.strictEqual(meta.route, 'webhook');
+    assert.strictEqual(meta.webhookUrl, undefined);
+    assert.match(out, /route 'webhook' not yet supported, using notify/);
+    assert.doesNotMatch(out, /^  webhook:/m);
+  } finally {
+    delete process.env.FAKE_ROUTE;
     delete process.env.WATCHTELL_COMPILER_CMD;
     cleanup(home);
   }
