@@ -14,7 +14,7 @@ const START_TIMEOUT_MS = 5000;
 const STOP_TIMEOUT_MS = run.HARD_TIMEOUT_MS + 5000;
 const KILL_TIMEOUT_MS = 5000;
 
-// A transition whose notification could not be delivered is queued on the
+// A transition whose alarm could not be delivered is queued on the
 // checker's runtime record and retried on every subsequent tick, up to this many
 // total attempts (the first dispatch is attempt 1). After the bound is reached the
 // alarm is given up on and logged, so it is neither silently lost nor retried

@@ -42,7 +42,7 @@ Compilation allows 10 minutes per attempt and makes at most two attempts: if the
 |---|---|
 | `watchtell add "<request>"` | Compile the request at add time, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). `--interval <duration>` sets the poll interval explicitly (`600`, `90s`, `5m`, `1h`) and overrides the compiler-inferred value. `--webhook <url>` delivers fired alarms by POSTing JSON to an http(s) URL instead of local Notification Center (see [Notifications](#notifications)). |
 | `watchtell list` | Show checkers: id, request, interval, route, last state, last fired. |
-| `watchtell test <id>` | Force one run now (ignores the schedule) and show the output/transition. Does not send a notification. |
+| `watchtell test <id>` | Force one run now (ignores the schedule) and show the output/transition. Does not deliver locally or by webhook. |
 | `watchtell rm <id>` | Delete a checker and its trust record + state sidecar. |
 | `watchtell daemon start [--detach]` | Run the internal-loop scheduler (foreground by default; `--detach` backgrounds it). |
 | `watchtell daemon stop` / `status` | Stop the daemon / report running / not running / stale-pid. |
@@ -146,7 +146,7 @@ A checker may still *compile* with some other `route=` the generator invents (e.
 ```
 
 - `id` — the checker id. `request` — your original natural-language request. `message` — the single alarm line the checker emitted. `firedAt` — ISO 8601 timestamp of the transition.
-- The URL must be `http`/`https` and is validated at add time. Non-2xx responses, transport errors, redirects, and timeouts all count as a **failed dispatch**, so the same [delivery-reliability queue](#delivery-reliability) applies: retry up to 5 ticks, newest-wins supersede, exactly-once on success, then give up (logged).
+- The URL must be `http`/`https` and is validated at add time. Non-2xx responses, transport errors, redirects, and timeouts all count as a **failed dispatch**, so the same [delivery-reliability queue](#delivery-reliability) applies: up to 5 total attempts, newest-wins supersede, exactly-once on success, then give up (logged).
 - On a failed webhook dispatch watchtell also raises a **local** Notification Center note (`webhook delivery failed for <id>`) so a broken URL is never silent.
 - **Secret hygiene.** Webhook URLs can embed a secret in their path. watchtell **never logs or prints the full URL** — `daemon.log`, `watchtell list`, and the `add` output show only scheme+host. The URL is stored in `~/.watchtell/checkers/<id>.meta.json`, which — like all state/meta files — is user-private; don't share it.
 
@@ -174,7 +174,7 @@ By default the poll interval is inferred by the compiler from your request, whic
 
 ## Delivery reliability
 
-A checker records its state transition into its own sidecar *during* the run, before the daemon dispatches the notification — so a failed dispatch must not be dropped, or the transition would already be consumed and the alarm lost silently. When a dispatch fails, watchtell **queues the owed alarm** on the checker's runtime record and **retries it on every subsequent tick**, up to 5 total attempts, then gives up. Each failure logs `NOTIFY-FAILED <id> (attempt X/5)` and the give-up logs `NOTIFY-GIVEUP <id> after 5 attempts` to `daemon.log`; a successful delivery clears the queue so an alarm is delivered **exactly once**. If a *newer* transition occurs while an older alarm is still undelivered, the newest wins — the stale alarm is dropped (`NOTIFY-SUPERSEDED <id>`) because the current state is the truth and delivering both would be noise. Retries respect silence-by-default: they only ever redeliver the one alarm already owed.
+A checker records its state transition into its own sidecar *during* the run, before the daemon dispatches the alarm — so a failed delivery must not be dropped, or the transition would already be consumed and the alarm lost silently. When delivery fails, watchtell **queues the owed alarm** on the checker's runtime record and **retries it on every subsequent tick**, up to 5 total attempts, then gives up. Each failure logs `NOTIFY-FAILED <id> (attempt X/5)` and the give-up logs `NOTIFY-GIVEUP <id> after 5 attempts` to `daemon.log`; a successful delivery clears the queue so an alarm is delivered **exactly once**. If a *newer* transition occurs while an older alarm is still undelivered, the newest wins — the stale alarm is dropped (`NOTIFY-SUPERSEDED <id>`) because the current state is the truth and delivering both would be noise. Retries respect silence-by-default: they only ever redeliver the one alarm already owed.
 
 Running `watchtell test` manually advances the checker's state sidecar out of band but does not clear a queued pending alarm. The daemon intentionally delivers that genuinely owed alarm on its next tick.
 

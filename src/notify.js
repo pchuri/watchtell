@@ -4,7 +4,7 @@ const { spawnSync } = require('child_process');
 const store = require('./store');
 const webhook = require('./webhook');
 
-// Dispatch a notification for a checker's transition line.
+// Dispatch an alarm for a checker's transition line.
 //
 // Routes:
 //   - `webhook` (with `opts.webhookUrl`): POST the alarm as JSON to that URL. On

@@ -34,7 +34,7 @@ function trustPath(id) {
   return checkerPath(id, '.check-trust');
 }
 
-// Compile-time metadata: request text, interval, route, createdAt.
+// Add-time metadata: id, request, interval, route, optional webhook URL, agent, createdAt.
 function metaPath(id) {
   return checkerPath(id, '.meta.json');
 }
