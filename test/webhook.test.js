@@ -46,6 +46,17 @@ test('validateUrl rejects non-http(s), garbage, and empty', () => {
   assert.throws(() => webhook.validateUrl('file:///etc/passwd'), /must be http or https/);
 });
 
+test('validateUrl rejects embedded credentials without echoing them', () => {
+  const credentialedUrl = 'https://user:secret@example.com/hook';
+  assert.throws(
+    () => webhook.validateUrl(credentialedUrl),
+    (error) =>
+      error.message === 'webhook URL must not include credentials' &&
+      !error.message.includes(credentialedUrl) &&
+      !error.message.includes('secret')
+  );
+});
+
 test('store keeps metadata and runtime records private on every write', () => {
   const home = makeHome();
   const id = 'abc123';
@@ -195,6 +206,59 @@ test('deliver: a slow endpoint past the timeout is a failed dispatch', async () 
   } finally {
     await srv.close();
   }
+});
+
+test('deliver: invalid timeout values fall back to the bounded default', () => {
+  const originalTimeout = process.env.WATCHTELL_WEBHOOK_TIMEOUT_MS;
+  const cases = [
+    { timeoutMs: 0 },
+    { timeoutMs: -1 },
+    { timeoutMs: 1.5 },
+    { timeoutMs: webhook.MAX_TIMEOUT_MS + 1 },
+    { timeoutMs: 'not-a-number' },
+  ];
+
+  try {
+    delete process.env.WATCHTELL_WEBHOOK_TIMEOUT_MS;
+    for (const options of cases) {
+      let spawnOptions;
+      const result = webhook.deliver('https://example.com/hook', { id: 'x' }, {
+        ...options,
+        spawnSyncFn: (_file, _args, receivedOptions) => {
+          spawnOptions = receivedOptions;
+          return { status: 0 };
+        },
+      });
+      assert.deepStrictEqual(result, { ok: true });
+      assert.strictEqual(spawnOptions.timeout, webhook.DEFAULT_TIMEOUT_MS + 2000);
+      assert.strictEqual(
+        spawnOptions.env.WATCHTELL_WEBHOOK_TIMEOUT_MS,
+        String(webhook.DEFAULT_TIMEOUT_MS)
+      );
+    }
+
+    process.env.WATCHTELL_WEBHOOK_TIMEOUT_MS = String(webhook.MAX_TIMEOUT_MS + 1);
+    let envSpawnOptions;
+    webhook.deliver('https://example.com/hook', { id: 'x' }, {
+      spawnSyncFn: (_file, _args, receivedOptions) => {
+        envSpawnOptions = receivedOptions;
+        return { status: 0 };
+      },
+    });
+    assert.strictEqual(envSpawnOptions.timeout, webhook.DEFAULT_TIMEOUT_MS + 2000);
+  } finally {
+    if (originalTimeout == null) delete process.env.WATCHTELL_WEBHOOK_TIMEOUT_MS;
+    else process.env.WATCHTELL_WEBHOOK_TIMEOUT_MS = originalTimeout;
+  }
+});
+
+test('deliver: spawn exceptions are failed dispatches', () => {
+  const result = webhook.deliver('https://example.com/hook', { id: 'x' }, {
+    spawnSyncFn: () => {
+      throw new RangeError('invalid timeout');
+    },
+  });
+  assert.deepStrictEqual(result, { ok: false });
 });
 
 // --- dispatch: local fallback note on webhook failure -----------------------
