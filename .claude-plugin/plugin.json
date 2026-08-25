@@ -1,0 +1,12 @@
+{
+  "name": "watchtell",
+  "description": "Hand off long-lived watching to the watchtell daemon — describe an alarm in plain language, get a deterministic checker that polls LLM-free and fires only on state transitions. Requires the watchtell CLI (npm i -g watchtell).",
+  "author": {
+    "name": "pchuri",
+    "url": "https://github.com/pchuri"
+  },
+  "homepage": "https://github.com/pchuri/watchtell",
+  "repository": "https://github.com/pchuri/watchtell",
+  "license": "MIT",
+  "keywords": ["alarm", "monitor", "daemon", "macos", "notifications", "natural-language"]
+}
