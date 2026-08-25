@@ -76,6 +76,21 @@ manually. `skill uninstall` also never removes a real file/dir, including with `
 installed skill is a symlink into the watchtell installation, updating watchtell keeps it current — no
 skill re-install needed.
 
+The skill is also published as a Claude Code plugin through the
+[pchuri/agent-skills](https://github.com/pchuri/agent-skills) marketplace, which installs it from this
+repo rather than a vendored copy:
+
+```sh
+/plugin marketplace add pchuri/agent-skills
+/plugin install watchtell@pchuri-skills
+```
+
+**Pick one route, not both.** `skill install` symlinks into `~/.claude/skills/`, which Claude Code
+auto-adopts as a plugin of its own, so doing both registers two plugins each contributing a skill named
+`watchtell`. The plugin route is for people who want the skill without the CLI on their `PATH` yet; if you
+already installed the CLI, `watchtell skill install` is the simpler path and keeps the skill current
+automatically.
+
 Manual fallback for a source install: run these from inside your clone.
 
 ```sh
