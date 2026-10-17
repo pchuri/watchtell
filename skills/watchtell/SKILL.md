@@ -32,7 +32,7 @@ one-off check you can do right now (just do the check).
 |---|---|
 | `watchtell add "<request>" --yes` | Compile the request, print the generated checker + meta, keep it, hash-bind it, run one immediate test with no delivery. `--yes` skips the interactive keep prompt — required for non-interactive agent use. Add `--interval <duration>` (`600`, `90s`, `5m`, `1h`) to set the poll interval deterministically — it overrides the compiler-inferred value; **prefer this over relying on inference**. Add `--webhook <url>` only when the user requests generic JSON webhook delivery instead of local Notification Center. |
 | `watchtell list` | Show every checker: id, request, interval, route, last state, last fired. |
-| `watchtell test <id>` | Run one checker now (ignores schedule), print its result. Delivers neither a local notification nor a webhook. |
+| `watchtell test <id>` | Preview one checker run now (ignores schedule) on a temporary copy of its state, print its result. Consumes no transition (the daemon still delivers it) and delivers neither a local notification nor a webhook. |
 | `watchtell rm <id>` | Delete a checker + its trust record + state. |
 | `watchtell daemon status` | running / not running / stale-pid. |
 | `watchtell daemon start --detach` | Start the poller in the background for this login. |
@@ -133,7 +133,9 @@ Make the request precise and self-contained. Rules:
    - the `meta` **route matches** the approved destination; for webhook delivery, verify the printed
      redacted scheme+host without exposing the secret path.
 4. `watchtell test <id>` — expect `silent (no transition)` (first run recorded a baseline) or a sane
-   `TRANSITION: …`. Run it again to confirm a steady target stays silent.
+   `TRANSITION: …` followed by a `(preview only: …)` note. `test` never consumes the transition, so a
+   real change keeps previewing on every `test` until the daemon delivers it; a steady target stays
+   silent when run again.
 5. **Decide:**
    - **Good** → tell the user it's registered as `<id>`, on the confirmed interval, and confirm the daemon
      is polling (§5). Report what the alarm message will look like.

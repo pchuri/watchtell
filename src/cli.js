@@ -134,10 +134,43 @@ async function cmdAdd(request, options) {
 
 // ---- test ------------------------------------------------------------------
 
+// `test` is a read-only PREVIEW: it runs the trusted checker bytes against a
+// temporary copy of the state sidecar and writes neither the production state
+// nor the runtime record (lastRunAt/pending untouched). A transition it shows is
+// therefore still owed to the daemon, which delivers it on its next due run.
 function cmdTest(id) {
-  if (!store.exists(id)) return fail(`no checker with id '${id}'`);
-  const res = run.runChecker(id);
-  reportRun(id, res, { immediate: false });
+  if (!store.exists(id) || store.isRemoved(id)) return fail(`no checker with id '${id}'`);
+  let res;
+  try {
+    res = run.previewChecker(id);
+  } catch (e) {
+    return fail(`could not run test preview for ${id}: ${e.message}`);
+  }
+  if (store.isRemoved(id) || !store.exists(id)) {
+    return fail(`checker ${id} was removed during the test`);
+  }
+  reportPreview(id, res);
+}
+
+function reportPreview(id, res) {
+  if (res.refused) {
+    return fail(`refusing to run ${id}: ${res.reason}`);
+  }
+  if (res.timedOut) {
+    return process.stdout.write(`  timed out after ${run.HARD_TIMEOUT_MS / 1000}s (no alarm)\n`);
+  }
+  if (res.error) {
+    return process.stdout.write(`  checker error: ${res.error} (no alarm)\n`);
+  }
+  if (res.output) {
+    process.stdout.write(`  TRANSITION: ${res.output}\n`);
+    process.stdout.write(
+      '  (preview only: test ran on a temporary copy of the state, so nothing was consumed or ' +
+        'delivered; the daemon delivers this transition on its next due run if it still holds)\n'
+    );
+    return;
+  }
+  process.stdout.write(`  silent (no transition). state=${res.previewState ?? 'none'}\n`);
 }
 
 function reportRun(id, res, { immediate }) {
@@ -452,7 +485,10 @@ function buildProgram() {
   program
     .command('test')
     .argument('<id>', 'checker id')
-    .description('force one run now (ignores schedule) and show the result')
+    .description(
+      'preview one run now (ignores schedule) on a temporary copy of the state; ' +
+        'consumes no transition and delivers nothing'
+    )
     .action(cmdTest);
 
   program

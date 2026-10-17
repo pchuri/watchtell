@@ -38,7 +38,7 @@
     "access": "public"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.js",
     "smoke": "bash test/smoke.sh",
     "semantic-release": "semantic-release"
   },

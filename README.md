@@ -34,7 +34,7 @@ npm link            # puts `watchtell` on your PATH
 
 State lives under `~/.watchtell/` (override with `WATCHTELL_HOME`, used by the tests).
 
-Compilation allows 10 minutes per attempt and makes at most two attempts: if the first times out or its checker fails the confusable-character gate, watchtell retries once; other failures return immediately. Set `WATCHTELL_COMPILE_TIMEOUT` to a positive whole number of seconds to change the per-attempt limit; invalid values use the default.
+Compilation allows 10 minutes per attempt and makes at most two attempts: if the first times out or its checker fails the confusable/control-character gate, watchtell retries once; other failures return immediately. Set `WATCHTELL_COMPILE_TIMEOUT` to a positive whole number of seconds to change the per-attempt limit; invalid values use the default.
 
 ## Commands
 
@@ -42,7 +42,7 @@ Compilation allows 10 minutes per attempt and makes at most two attempts: if the
 |---|---|
 | `watchtell add "<request>"` | Compile the request at add time, print the generated checker + meta, ask **Keep? (y/n)**. On Keep it hash-binds the script and runs one immediate test. `--yes` keeps without review (trusts the generator). `--interval <duration>` sets the poll interval explicitly (`600`, `90s`, `5m`, `1h`) and overrides the compiler-inferred value. `--webhook <url>` delivers fired alarms by POSTing JSON to an http(s) URL instead of local Notification Center (see [Notifications](#notifications)). |
 | `watchtell list` | Show checkers: id, request, interval, route, last state, last fired. |
-| `watchtell test <id>` | Force one run now (ignores the schedule) and show the output/transition. Does not deliver locally or by webhook. |
+| `watchtell test <id>` | Preview one run now (ignores the schedule) and show the output/transition. It runs the trusted checker bytes against a temporary copy of the state sidecar, so it consumes no transition, writes neither the state nor the runtime record, and delivers nothing locally or by webhook. |
 | `watchtell rm <id>` | Delete a checker and its trust record + state sidecar. |
 | `watchtell daemon start [--detach]` | Run the internal-loop scheduler (foreground by default; `--detach` backgrounds it). |
 | `watchtell daemon stop` / `status` | Stop the daemon / report running / not running / stale-pid. |
@@ -134,7 +134,7 @@ A generated checker is arbitrary code, so it never runs before you approve it:
 
 - **Keep = hash-bind.** On Keep, watchtell records the SHA-256 of the exact script bytes into a trust record (`<id>.check-trust`).
 - **Refuse on mismatch.** The daemon and `watchtell test` **re-hash the script before every run** and refuse to execute — with a clear message, quarantining nothing silently — if the hash mismatches or the trust record is absent. Editing a checker's bytes after Keep disables it until you re-add it.
-- **Confusable lint before Keep.** Before the Keep prompt, watchtell scans the generated script for ASCII-confusable characters (fullwidth forms, curly quotes, dashes, non-breaking spaces) that LLMs occasionally emit in place of ASCII code — e.g. a fullwidth `｜` for `|` — and rejects it as a retriable compile failure within the same two-attempt budget as timeouts, so a checker that would silently lose its first alarm never gets kept. Legitimate non-ASCII in match patterns and messages (e.g. Korean text) is untouched.
+- **Confusable lint before Keep.** Before the Keep prompt, watchtell scans the generated script for ASCII-confusable characters (fullwidth forms, curly quotes, dashes, non-breaking spaces) that LLMs occasionally emit in place of ASCII code — e.g. a fullwidth `｜` for `|` — and rejects it as a retriable compile failure within the same two-attempt budget as timeouts, so a checker that would silently lose its first alarm never gets kept. The same gate rejects review-spoofing control characters — C0 controls other than TAB/LF (e.g. carriage return, ESC terminal sequences), DEL, C1 controls, and bidi marks/embeddings/overrides/isolates (U+200E/U+200F, U+202A–U+202E, U+2066–U+2069) — in the script and the printed meta route, because they could hide or reorder the code you review before Keep. Errors name them by code point and never print the raw bytes. Legitimate non-ASCII in match patterns and messages (e.g. Korean text, emoji, emoji ZWJ sequences) is untouched.
 
 ## Notifications
 
@@ -192,7 +192,7 @@ By default the poll interval is inferred by the compiler from your request, whic
 
 A checker records its state transition into its own sidecar *during* the run, before the daemon dispatches the alarm — so a failed delivery must not be dropped, or the transition would already be consumed and the alarm lost silently. When delivery fails, watchtell **queues the owed alarm** on the checker's runtime record and **retries it on every subsequent tick**, up to 5 total attempts, then gives up. Each failure logs `NOTIFY-FAILED <id> (attempt X/5)` and the give-up logs `NOTIFY-GIVEUP <id> after 5 attempts` to `daemon.log`; a successful delivery clears the queue. If a *newer* transition occurs while an older alarm is still undelivered, the newest wins — the stale alarm is dropped (`NOTIFY-SUPERSEDED <id>`) because the current state is the truth and delivering both would be noise. Retries respect silence-by-default: they only ever redeliver the one alarm already owed. Webhook retries keep `id` and `firedAt` stable so receivers can deduplicate them; a receiver that processes a request but loses its response may see the POST again.
 
-Running `watchtell test` manually advances the checker's state sidecar out of band but does not clear a queued pending alarm. The daemon intentionally delivers that genuinely owed alarm on its next tick.
+`watchtell test` is a preview: it copies the current state sidecar into a private temporary directory, runs the hash-verified script bytes there, prints the result (`TRANSITION: …` plus a preview note, or `silent (no transition). state=…`), and deletes the temporary directory — also on errors, timeouts, and trust refusals. It never writes the real state sidecar, `lastRunAt`, or a queued pending alarm, and it does not save-and-restore the real state (which could clobber a concurrent daemon tick). A transition that `test` shows is therefore still detected and delivered exactly once by the daemon on its next due run, and repeated `test` runs keep previewing it.
 
 ## Removing a checker safely
 
