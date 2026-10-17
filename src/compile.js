@@ -115,9 +115,71 @@ function hexCodepoint(cp) {
   return 'U+' + cp.toString(16).toUpperCase().padStart(4, '0');
 }
 
-// Scan a checker script for ASCII-confusable characters. Returns an array of
-// findings { line, column, char, codepoint, ascii } (empty when clean). Column
-// is a 1-based code-point index within the line.
+// Review-spoofing control characters. The generated script is printed for review
+// before Keep; a carriage return, terminal escape sequence, or bidi override in
+// it can overwrite, hide, or visually reorder what the reviewer sees, so the
+// reviewed text would not be the code that gets hash-bound and executed. A
+// generated checker has no legitimate use for any of these. Again a small,
+// explicit deny-list — NOT a non-ASCII ban: TAB/LF, Korean, emoji, and emoji
+// ZWJ sequences (U+200D) stay allowed.
+const CONTROL_NAMES = new Map([
+  [0x00, 'NULL'],
+  [0x07, 'BELL'],
+  [0x08, 'BACKSPACE'],
+  [0x0b, 'LINE TABULATION'],
+  [0x0c, 'FORM FEED'],
+  [0x0d, 'CARRIAGE RETURN'],
+  [0x1b, 'ESCAPE'],
+  [0x7f, 'DELETE'],
+  [0x9b, 'CONTROL SEQUENCE INTRODUCER'],
+  [0x061c, 'ARABIC LETTER MARK'],
+  [0x200e, 'LEFT-TO-RIGHT MARK'],
+  [0x200f, 'RIGHT-TO-LEFT MARK'],
+  [0x202a, 'LEFT-TO-RIGHT EMBEDDING'],
+  [0x202b, 'RIGHT-TO-LEFT EMBEDDING'],
+  [0x202c, 'POP DIRECTIONAL FORMATTING'],
+  [0x202d, 'LEFT-TO-RIGHT OVERRIDE'],
+  [0x202e, 'RIGHT-TO-LEFT OVERRIDE'],
+  [0x2066, 'LEFT-TO-RIGHT ISOLATE'],
+  [0x2067, 'RIGHT-TO-LEFT ISOLATE'],
+  [0x2068, 'FIRST STRONG ISOLATE'],
+  [0x2069, 'POP DIRECTIONAL ISOLATE'],
+]);
+
+// Name of a rejected control code point, or null when the code point is allowed.
+// Rejects C0 (except TAB/LF), DEL, C1, and the bidi marks/embeddings/overrides/
+// isolates listed above.
+function controlName(cp) {
+  if (cp === 0x09 || cp === 0x0a) return null;
+  if (cp <= 0x1f) return CONTROL_NAMES.get(cp) || 'C0 CONTROL';
+  if (cp === 0x7f) return 'DELETE';
+  if (cp >= 0x80 && cp <= 0x9f) return CONTROL_NAMES.get(cp) || 'C1 CONTROL';
+  return CONTROL_NAMES.get(cp) || null;
+}
+
+// Scan text for rejected control characters only. Findings never carry the raw
+// character, so error output cannot itself replay an escape sequence.
+function lintControls(text) {
+  const findings = [];
+  const lines = String(text).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const chars = Array.from(lines[i]);
+    for (let c = 0; c < chars.length; c++) {
+      const cp = chars[c].codePointAt(0);
+      const name = controlName(cp);
+      if (name != null) {
+        findings.push({ kind: 'control', line: i + 1, column: c + 1, codepoint: hexCodepoint(cp), name });
+      }
+    }
+  }
+  return findings;
+}
+
+// Scan a checker script for ASCII-confusable and review-spoofing control
+// characters. Returns an array of findings (empty when clean): confusables are
+// { kind: 'confusable', line, column, char, codepoint, ascii }; controls are
+// { kind: 'control', line, column, codepoint, name } (no raw char). Column is a
+// 1-based code-point index within the line.
 function lintConfusables(script) {
   const findings = [];
   const lines = String(script).split('\n');
@@ -128,28 +190,49 @@ function lintConfusables(script) {
       const ascii = confusableAscii(cp);
       if (ascii != null) {
         findings.push({
+          kind: 'confusable',
           line: i + 1,
           column: c + 1,
           char: chars[c],
           codepoint: hexCodepoint(cp),
           ascii,
         });
+        continue;
+      }
+      const name = controlName(cp);
+      if (name != null) {
+        findings.push({ kind: 'control', line: i + 1, column: c + 1, codepoint: hexCodepoint(cp), name });
       }
     }
   }
   return findings;
 }
 
+function hasControlFindings(findings) {
+  return findings.some((f) => f.kind === 'control');
+}
+
 // Format lint findings into a clear, multi-line failure message naming each
-// offending line, character, code point, and the ASCII it resembles.
+// offending line, character, code point, and the ASCII it resembles. Control
+// characters are named by code point only — never echoed raw.
 function formatConfusables(findings) {
   const lines = [
-    'generated checker contains ASCII-confusable characters (likely a broken checker):',
+    hasControlFindings(findings)
+      ? 'generated checker contains unsafe control or ASCII-confusable characters ' +
+        '(could spoof the review or break the checker):'
+      : 'generated checker contains ASCII-confusable characters (likely a broken checker):',
   ];
   for (const f of findings) {
-    lines.push(
-      `  line ${f.line} col ${f.column}: '${f.char}' (${f.codepoint}) resembles ASCII '${f.ascii}'`
-    );
+    const where = f.where || `line ${f.line}`;
+    if (f.kind === 'control') {
+      lines.push(
+        `  ${where} col ${f.column}: ${f.codepoint} ${f.name} (invisible control character; can hide or reorder reviewed text)`
+      );
+    } else {
+      lines.push(
+        `  ${where} col ${f.column}: '${f.char}' (${f.codepoint}) resembles ASCII '${f.ascii}'`
+      );
+    }
   }
   return lines.join('\n');
 }
@@ -290,12 +373,18 @@ function compile(request, opts = {}) {
     // ASCII-confusable gate: a checker with fullwidth/lookalike characters would
     // ship and then silently lose its first real alarm. Treat it like a timeout —
     // one retry (a fresh compile often avoids the glitch), then fail clearly.
-    const findings = lintConfusables(parsed.script);
+    // The same gate also rejects review-spoofing control characters (CR, ESC,
+    // bidi overrides, ...) in the script and in the printed meta route.
+    const findings = [
+      ...lintControls(parsed.meta.route).map((f) => ({ ...f, where: 'meta route' })),
+      ...lintConfusables(parsed.script),
+    ];
     if (findings.length > 0) {
       const message = formatConfusables(findings);
       if (attempt < MAX_COMPILE_ATTEMPTS) {
+        const what = hasControlFindings(findings) ? 'unsafe control' : 'confusable';
         process.stderr.write(
-          `compile produced confusable characters, retrying (${attempt + 1}/${MAX_COMPILE_ATTEMPTS})...\n`
+          `compile produced ${what} characters, retrying (${attempt + 1}/${MAX_COMPILE_ATTEMPTS})...\n`
         );
         continue;
       }
@@ -313,6 +402,7 @@ module.exports = {
   parseDuration,
   parse,
   lintConfusables,
+  lintControls,
   formatConfusables,
   resolveCommand,
   resolveTimeoutMs,

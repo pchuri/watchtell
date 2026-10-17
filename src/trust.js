@@ -30,26 +30,46 @@ function parseTrust(text) {
   return { version, hash };
 }
 
-// Re-hash the script and compare against the trust record. Returns a structured
-// result; the daemon/test refuse to run when ok is false and surface `reason`.
-function verify(id) {
+function readIfPresent(file, encoding) {
+  try {
+    return fs.readFileSync(file, encoding);
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+// Re-hash the script and compare against the trust record, reading the script
+// bytes exactly ONCE. On success the verified bytes are returned so a caller can
+// execute precisely what was hashed (no re-read between verify and run).
+function verifyBytes(id) {
   const script = paths.scriptPath(id);
   const trust = paths.trustPath(id);
-  if (!fs.existsSync(script)) {
+  const bytes = readIfPresent(script);
+  if (bytes == null) {
     return { ok: false, reason: 'checker script is missing' };
   }
-  if (!fs.existsSync(trust)) {
+  const trustText = readIfPresent(trust, 'utf8');
+  if (trustText == null) {
     return { ok: false, reason: 'trust record is absent (checker was never kept)' };
   }
-  const parsed = parseTrust(fs.readFileSync(trust, 'utf8'));
+  const parsed = parseTrust(trustText);
   if (!parsed) {
     return { ok: false, reason: 'trust record is malformed' };
   }
-  const actual = sha256File(script);
+  const actual = crypto.createHash('sha256').update(bytes).digest('hex');
   if (actual !== parsed.hash) {
     return { ok: false, reason: 'script hash mismatch — checker was modified after Keep' };
   }
-  return { ok: true, hash: actual };
+  return { ok: true, hash: actual, bytes };
 }
 
-module.exports = { TRUST_VERSION, sha256File, bind, verify };
+// Re-hash the script and compare against the trust record. Returns a structured
+// result; the daemon/test refuse to run when ok is false and surface `reason`.
+function verify(id) {
+  const v = verifyBytes(id);
+  if (!v.ok) return v;
+  return { ok: true, hash: v.hash };
+}
+
+module.exports = { TRUST_VERSION, sha256File, bind, verify, verifyBytes };

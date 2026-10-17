@@ -304,6 +304,162 @@ test('compile retries once then fails when the compiler emits confusables', () =
   });
 });
 
+// ---- review-spoofing control characters -------------------------------------
+
+const CONTROL_COMPILER = path.join(FIXTURES, 'control-compiler.js');
+const ch = (...cps) => String.fromCodePoint(...cps);
+// Matches any raw character the control gate rejects (used to prove error
+// output never replays them).
+const RAW_CONTROL_RE = new RegExp(
+  '[' +
+    [
+      [0x00, 0x08],
+      [0x0b, 0x1f],
+      [0x7f, 0x9f],
+      [0x200e, 0x200f],
+      [0x202a, 0x202e],
+      [0x2066, 0x2069],
+    ]
+      .map(([a, b]) => `\\u${a.toString(16).padStart(4, '0')}-\\u${b.toString(16).padStart(4, '0')}`)
+      .join('') +
+    '\\u061c]'
+);
+
+test('lintConfusables rejects C0/DEL/C1 and bidi controls by code point', () => {
+  const cases = [
+    [0x0d, 'U+000D', /CARRIAGE RETURN/],
+    [0x1b, 'U+001B', /ESCAPE/],
+    [0x00, 'U+0000', /NULL/],
+    [0x08, 'U+0008', /BACKSPACE/],
+    [0x01, 'U+0001', /C0 CONTROL/],
+    [0x7f, 'U+007F', /DELETE/],
+    [0x85, 'U+0085', /C1 CONTROL/],
+    [0x9b, 'U+009B', /CONTROL SEQUENCE INTRODUCER/],
+    [0x202a, 'U+202A', /LEFT-TO-RIGHT EMBEDDING/],
+    [0x202e, 'U+202E', /RIGHT-TO-LEFT OVERRIDE/],
+    [0x2066, 'U+2066', /LEFT-TO-RIGHT ISOLATE/],
+    [0x2069, 'U+2069', /POP DIRECTIONAL ISOLATE/],
+    [0x200e, 'U+200E', /LEFT-TO-RIGHT MARK/],
+    [0x200f, 'U+200F', /RIGHT-TO-LEFT MARK/],
+  ];
+  for (const [cp, code, nameRe] of cases) {
+    const findings = compile.lintConfusables(`#!/bin/bash\necho "ok${ch(cp)}x"\n`);
+    assert.strictEqual(findings.length, 1, `expected one finding for ${code}`);
+    assert.strictEqual(findings[0].kind, 'control');
+    assert.strictEqual(findings[0].codepoint, code);
+    assert.strictEqual(findings[0].line, 2);
+    assert.strictEqual(findings[0].column, 9);
+    assert.match(findings[0].name, nameRe);
+    assert.strictEqual(findings[0].char, undefined, 'raw control char is not carried');
+    const msg = compile.formatConfusables(findings);
+    assert.match(msg, /unsafe control or ASCII-confusable characters/);
+    assert.match(msg, new RegExp(`line 2 col 9: ${code.replace('+', '\\+')}`));
+    assert.doesNotMatch(msg, RAW_CONTROL_RE, `message for ${code} has no raw control bytes`);
+  }
+});
+
+test('lintConfusables still ACCEPTS TAB, LF, Korean, emoji and emoji ZWJ sequences', () => {
+  const script = [
+    '#!/usr/bin/env bash',
+    `\tprintf '%s\\n' "알림: 상태 변경 ✅ ${ch(0x1f469, 0x200d, 0x1f4bb)} ${ch(0x1f3f3, 0xfe0f, 0x200d, 0x1f308)}"`,
+    "grep -q '권한이 없습니다' /dev/null || true",
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(compile.lintConfusables(script), []);
+});
+
+test('compile rejects control characters within the two-attempt budget, without raw bytes', () => {
+  for (const kind of ['esc', 'cr', 'rlo', 'lri', 'del', 'c1', 'nul']) {
+    withFlakyEnv({ CONTROL_KIND: kind }, (counter) => {
+      const command = { file: process.execPath, args: [CONTROL_COMPILER], label: 'control' };
+      let error;
+      try {
+        compile.compile('watch it', { command, timeoutMs: 5000 });
+      } catch (e) {
+        error = e;
+      }
+      assert.ok(error instanceof compile.CompileError, `${kind}: expected CompileError`);
+      assert.match(error.message, /unsafe control or ASCII-confusable characters/);
+      assert.match(error.message, /line 4 col \d+: U\+[0-9A-F]{4} /);
+      assert.doesNotMatch(error.message, RAW_CONTROL_RE);
+      assert.strictEqual(fs.readFileSync(counter, 'utf8').trim(), '2', `${kind}: exactly two attempts`);
+    });
+  }
+});
+
+test('compile rejects a control sequence in the printed meta route', () => {
+  withFlakyEnv({ CONTROL_ROUTE_BAD: '1' }, (counter) => {
+    const command = { file: process.execPath, args: [CONTROL_COMPILER], label: 'control' };
+    assert.throws(
+      () => compile.compile('watch it', { command, timeoutMs: 5000 }),
+      (e) => /meta route col 7: U\+001B ESCAPE/.test(e.message) && !RAW_CONTROL_RE.test(e.message)
+    );
+    assert.strictEqual(fs.readFileSync(counter, 'utf8').trim(), '2');
+  });
+});
+
+test('compile retries once after control characters and accepts a clean second attempt', () => {
+  withFlakyEnv({ CONTROL_KIND: 'esc', CONTROL_CLEAN_AFTER: '1' }, (counter) => {
+    const command = { file: process.execPath, args: [CONTROL_COMPILER], label: 'control' };
+    const out = compile.compile('watch it', { command, timeoutMs: 5000 });
+    assert.match(out.script, /알림 ✅/);
+    assert.ok(out.script.includes(ch(0x1f469, 0x200d, 0x1f4bb)), 'emoji ZWJ sequence kept');
+    assert.ok(out.script.includes('\t'), 'TAB kept');
+    assert.deepStrictEqual(compile.lintConfusables(out.script), []);
+    assert.strictEqual(fs.readFileSync(counter, 'utf8').trim(), '2');
+  });
+});
+
+test('add rejects control-character checkers before review/Keep/hash/file/execute', () => {
+  for (const kind of ['esc', 'cr', 'rlo']) {
+    const home = makeHome();
+    try {
+      const marker = path.join(home, 'executed');
+      const r = spawnSync(process.execPath, [BIN, 'add', 'alert me', '--yes'], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WATCHTELL_HOME: home,
+          WATCHTELL_COMPILER_CMD: `"${process.execPath}" "${CONTROL_COMPILER}"`,
+          CONTROL_KIND: kind,
+          CONTROL_MARKER: marker,
+        },
+      });
+      assert.strictEqual(r.status, 1, r.stdout);
+      assert.match(r.stderr, /unsafe control or ASCII-confusable characters/);
+      assert.doesNotMatch(r.stdout, /Generated checker/, 'never shown for review');
+      assert.doesNotMatch(r.stdout + r.stderr, RAW_CONTROL_RE, 'no raw control bytes printed');
+      assert.strictEqual(fs.readdirSync(paths.checkersDir()).length, 0, 'nothing written or hash-bound');
+      assert.ok(!fs.existsSync(marker), 'checker never executed');
+    } finally {
+      cleanup(home);
+    }
+  }
+});
+
+test('add keeps a checker with ordinary Unicode, TAB, and emoji ZWJ', () => {
+  const home = makeHome();
+  try {
+    const marker = path.join(home, 'executed');
+    const r = spawnSync(process.execPath, [BIN, 'add', 'alert me', '--yes'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        WATCHTELL_HOME: home,
+        WATCHTELL_COMPILER_CMD: `"${process.execPath}" "${CONTROL_COMPILER}"`,
+        CONTROL_KIND: 'clean',
+        CONTROL_MARKER: marker,
+      },
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Kept as [0-9a-f]{6}/);
+    assert.match(r.stdout, /알림 ✅/);
+    assert.ok(fs.existsSync(marker), 'immediate test ran the kept checker');
+  } finally {
+    cleanup(home);
+  }
+});
+
 test('add (with fixture compiler) compiles, keeps, hash-binds, and runs immediate test', () => {
   const home = makeHome();
   try {
