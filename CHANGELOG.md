@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/pchuri/watchtell/compare/v1.1.0...v1.1.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* isolate preview state and reject script controls ([0a5c386](https://github.com/pchuri/watchtell/commit/0a5c38664c27813ec3c24b537e2068c79a00445f))
+
 # [1.1.0](https://github.com/pchuri/watchtell/compare/v1.0.1...v1.1.0) (2026-07-28)
 
 
